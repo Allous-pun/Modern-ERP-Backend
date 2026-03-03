@@ -15,7 +15,6 @@ const moduleRoutes = require('./routes/module.routes');
 const organizationRoutes = require('./routes/organization.routes');
 const inviteRoutes = require('./routes/invite.routes');
 
-
 // Import module-specific routes
 const systemRoutes = require('./routes/system.routes');
 const securityRoutes = require('./routes/security.routes');
@@ -59,7 +58,6 @@ app.use('/api/permissions', permissionRoutes);
 app.use('/api/modules', moduleRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/invites', inviteRoutes);
-
 
 // Register module routes
 app.use('/api/system', systemRoutes);

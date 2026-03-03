@@ -6,6 +6,8 @@ const {
     login,
     getProfile,
     updateProfile,
+    uploadAvatar,
+    deleteAvatar,
     logout,
     refreshToken
 } = require('../controllers/auth.controller');
@@ -15,6 +17,7 @@ const {
     validateLogin,
     validateProfileUpdate 
 } = require('../middleware/validation.middleware');
+const { upload } = require('../config/cloudinary');
 
 const router = express.Router();
 
@@ -27,6 +30,19 @@ router.post('/refresh-token', refreshToken);
 // Protected routes
 router.get('/profile', protect, getProfile);
 router.put('/profile', protect, validateProfileUpdate, updateProfile);
+
+// Avatar routes
+router.post('/avatar', 
+    protect, 
+    upload.single('avatar'), 
+    uploadAvatar
+);
+
+router.delete('/avatar', 
+    protect, 
+    deleteAvatar
+);
+
 router.post('/logout', protect, logout);
 
 module.exports = router;

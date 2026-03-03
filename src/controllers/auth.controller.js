@@ -526,6 +526,99 @@ const updateProfile = async (req, res) => {
     }
 };
 
+// @desc    Upload user avatar
+// @route   POST /api/auth/avatar
+// @access  Private
+const uploadAvatar = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: 'No file uploaded'
+            });
+        }
+
+        // Get the uploaded file URL from Cloudinary
+        const avatarUrl = req.file.path;
+
+        // Update user's avatar in database
+        const user = await User.findByIdAndUpdate(
+            req.user.userId,
+            { avatar: avatarUrl },
+            { new: true }
+        ).select('-password');
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Avatar uploaded successfully',
+            data: {
+                avatar: user.avatar
+            }
+        });
+    } catch (error) {
+        console.error('Avatar upload error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to upload avatar',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+};
+
+// @desc    Delete user avatar
+// @route   DELETE /api/auth/avatar
+// @access  Private
+const deleteAvatar = async (req, res) => {
+    try {
+        // Get current user to find avatar public_id
+        const user = await User.findById(req.user.userId);
+        
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // If user has an avatar, delete it from Cloudinary
+        if (user.avatar) {
+            // Extract public_id from URL
+            const urlParts = user.avatar.split('/');
+            const filename = urlParts[urlParts.length - 1];
+            const publicId = `erp/avatars/${filename.split('.')[0]}`;
+            
+            try {
+                await cloudinary.uploader.destroy(publicId);
+            } catch (cloudinaryError) {
+                console.error('Cloudinary delete error:', cloudinaryError);
+                // Continue even if Cloudinary delete fails
+            }
+        }
+
+        // Remove avatar from user document
+        user.avatar = null;
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Avatar deleted successfully'
+        });
+    } catch (error) {
+        console.error('Avatar delete error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to delete avatar'
+        });
+    }
+};
+
 // @desc    Logout user
 // @route   POST /api/auth/logout
 // @access  Private
@@ -589,6 +682,8 @@ module.exports = {
     login,
     getProfile,
     updateProfile,
+    uploadAvatar,
+    deleteAvatar,
     logout,
     refreshToken
 };
