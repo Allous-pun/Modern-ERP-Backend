@@ -73,27 +73,39 @@ const register = async (req, res) => {
         if (organizationId) {
             const organization = await Organization.findById(organizationId);
             if (organization) {
-                const adminRole = await Role.findOne({ name: 'Organization Admin' });
+                // Try to find Organization Admin role, but don't fail if it doesn't exist
+                let adminRole = await Role.findOne({ name: 'Organization Admin' });
                 
-                if (adminRole) {
-                    // Add as member
-                    await OrganizationMember.create({
-                        user: user._id,
-                        organization: organizationId,
-                        roles: [adminRole._id],
-                        jobTitle: 'Organization Admin',
-                        status: 'active',
-                        isDefault: true,
-                        joinedAt: new Date()
+                // If role doesn't exist, create it on the fly
+                if (!adminRole) {
+                    console.log('⚠️ Organization Admin role not found, creating it...');
+                    adminRole = await Role.create({
+                        name: 'Organization Admin',
+                        description: 'Can manage organization settings and members',
+                        category: 'system',
+                        hierarchy: 800,
+                        permissions: [],
+                        isDefault: true
                     });
-
-                    // Update user's organizations
-                    user.organizations = [organizationId];
-                    user.defaultOrganization = organizationId;
-                    await user.save();
-
-                    console.log(`🏢 User added as admin to organization: ${organization.name}`);
                 }
+
+                // Add as member (even if we had to create the role)
+                await OrganizationMember.create({
+                    user: user._id,
+                    organization: organizationId,
+                    roles: [adminRole._id],
+                    jobTitle: 'Organization Admin',
+                    status: 'active',
+                    isDefault: true,
+                    joinedAt: new Date()
+                });
+
+                // Update user's organizations
+                user.organizations = [organizationId];
+                user.defaultOrganization = organizationId;
+                await user.save();
+
+                console.log(`🏢 User added as admin to organization: ${organization.name}`);
             }
         }
 
