@@ -25,8 +25,22 @@ const hrRoutes = require('./routes/hr.routes');
 const salesRoutes = require('./routes/sales.routes');
 
 // Middleware
+const allowedOrigins = [
+    'https://bright-erp-rosy.vercel.app',
+    'http://localhost:8080'
+];
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like Postman or mobile apps)
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true
 }));
 app.use(express.json());
