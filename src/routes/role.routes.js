@@ -6,7 +6,9 @@ const {
     createRole,
     updateRole,
     deleteRole,
+    assignRoleToMember,
     assignRoleToUser,
+    getMemberPermissions,
     getUserPermissions
 } = require('../controllers/role.controller');
 const { protect } = require('../middleware/auth.middleware');
@@ -27,13 +29,25 @@ router.route('/:id')
     .put(requirePermission('system.roles_manage'), updateRole)
     .delete(requirePermission('system.roles_manage'), deleteRole);
 
-// User role assignment
-router.post('/assign/:userId', 
+// Organization member role assignment
+router.post('/assign/member/:memberId', 
+    requirePermission('system.users_manage'), 
+    assignRoleToMember
+);
+
+// Supreme user role assignment
+router.post('/assign/user/:userId', 
     requirePermission('system.users_manage'), 
     assignRoleToUser
 );
 
-// Get user permissions
+// Get organization member permissions
+router.get('/member/:memberId/permissions',
+    requirePermission('system.users_view'),
+    getMemberPermissions
+);
+
+// Get supreme user permissions
 router.get('/user/:userId/permissions',
     requirePermission('system.users_view'),
     getUserPermissions

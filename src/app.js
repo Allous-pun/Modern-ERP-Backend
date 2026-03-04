@@ -8,12 +8,13 @@ require('dotenv').config();
 const app = express();
 
 // Import routes
-const authRoutes = require('./routes/auth.routes');
 const roleRoutes = require('./routes/role.routes');
 const permissionRoutes = require('./routes/permission.routes');
 const moduleRoutes = require('./routes/module.routes');
 const organizationRoutes = require('./routes/organization.routes');
 const inviteRoutes = require('./routes/invite.routes');
+const supremeRoutes = require('./routes/supreme.routes');
+const organizationAuthRoutes = require('./routes/organization-auth.routes');
 
 // Import module-specific routes
 const systemRoutes = require('./routes/system.routes');
@@ -52,12 +53,13 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 // Routes
-app.use('/api/auth', authRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/modules', moduleRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/invites', inviteRoutes);
+app.use('/api/supreme', supremeRoutes);
+app.use('/api/organization-auth', organizationAuthRoutes);
 
 // Register module routes
 app.use('/api/system', systemRoutes);

@@ -1,6 +1,7 @@
 // src/controllers/invite.controller.js
 const Invite = require('../models/invite.model');
 const Organization = require('../models/organization.model');
+const OrganizationMember = require('../models/organizationMember.model');
 const Role = require('../models/role.model');
 const crypto = require('crypto');
 
@@ -11,22 +12,17 @@ const createInvite = async (req, res) => {
     try {
         const { email, roleIds, jobTitle, department, message } = req.body;
 
-        // Check if user already exists and is a member
-        const User = require('../models/user.model');
-        const OrganizationMember = require('../models/organizationMember.model');
-
-        const user = await User.findOne({ email });
-        if (user) {
-            const existingMember = await OrganizationMember.findOne({
-                user: user._id,
-                organization: req.organization.id
+        // Check if email already exists in this organization
+        const existingMember = await OrganizationMember.findOne({
+            organization: req.organization.id,
+            'personalInfo.email': email
+        });
+        
+        if (existingMember) {
+            return res.status(400).json({
+                success: false,
+                message: 'User with this email is already a member of this organization'
             });
-            if (existingMember) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'User is already a member of this organization'
-                });
-            }
         }
 
         // Verify roles exist if provided
@@ -43,11 +39,11 @@ const createInvite = async (req, res) => {
         // Generate unique token
         const token = crypto.randomBytes(32).toString('hex');
 
-        // Create invite
+        // Create invite - use req.user.memberId instead of req.user.userId
         const invite = await Invite.create({
             email,
             organization: req.organization.id,
-            invitedBy: req.user.userId,
+            invitedBy: req.user.memberId,  // ✅ FIXED: Use memberId
             roles: roleIds || [],
             jobTitle,
             department,
@@ -58,7 +54,10 @@ const createInvite = async (req, res) => {
 
         // Populate for response
         await invite.populate('organization', 'name slug');
-        await invite.populate('invitedBy', 'firstName lastName email');
+        await invite.populate({
+            path: 'invitedBy',
+            select: 'personalInfo.firstName personalInfo.lastName personalInfo.email'
+        });
         await invite.populate('roles', 'name');
 
         // TODO: Send email with invite link
@@ -76,7 +75,8 @@ const createInvite = async (req, res) => {
         console.error('Create invite error:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to create invite'
+            message: 'Failed to create invite',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 };
@@ -89,7 +89,10 @@ const getInvites = async (req, res) => {
         const invites = await Invite.find({
             organization: req.organization.id
         })
-        .populate('invitedBy', 'firstName lastName email')
+        .populate({
+            path: 'invitedBy',
+            select: 'personalInfo.firstName personalInfo.lastName personalInfo.email'
+        })
         .populate('roles', 'name')
         .sort('-createdAt');
 

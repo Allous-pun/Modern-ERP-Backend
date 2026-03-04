@@ -2,7 +2,9 @@
 const mongoose = require('mongoose');
 
 const organizationSchema = new mongoose.Schema({
-    // Identity
+    // ============================================
+    // CORE IDENTITY - Keep
+    // ============================================
     name: {
         type: String,
         required: [true, 'Organization name is required'],
@@ -26,7 +28,9 @@ const organizationSchema = new mongoose.Schema({
         sparse: true
     },
     
-    // Business Information
+    // ============================================
+    // BUSINESS INFORMATION - Keep
+    // ============================================
     registrationNumber: {
         type: String,
         trim: true
@@ -50,7 +54,9 @@ const organizationSchema = new mongoose.Schema({
         default: '1-10'
     },
     
-    // Contact
+    // ============================================
+    // CONTACT - Keep (basic contact for the business)
+    // ============================================
     email: {
         type: String,
         required: [true, 'Organization email is required'],
@@ -68,7 +74,9 @@ const organizationSchema = new mongoose.Schema({
         match: [/^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/, 'Please provide a valid URL']
     },
     
-    // Address
+    // ============================================
+    // ADDRESS - Keep
+    // ============================================
     address: {
         street: String,
         city: String,
@@ -80,24 +88,9 @@ const organizationSchema = new mongoose.Schema({
         postalCode: String
     },
     
-    // Currency & Localization
-    currency: {
-        type: String,
-        default: 'USD',
-        uppercase: true,
-        trim: true
-    },
-    timezone: {
-        type: String,
-        default: 'UTC'
-    },
-    language: {
-        type: String,
-        default: 'en',
-        lowercase: true
-    },
-    
-    // Subscription & Billing
+    // ============================================
+    // SUBSCRIPTION & BILLING - Keep (core to SaaS)
+    // ============================================
     subscription: {
         plan: {
             type: String,
@@ -106,7 +99,7 @@ const organizationSchema = new mongoose.Schema({
         },
         status: {
             type: String,
-            enum: ['active', 'inactive', 'suspended', 'cancelled', 'expired'],
+            enum: ['active', 'inactive', 'suspended', 'cancelled', 'expired', 'trial'], // ← ADD 'trial' HERE
             default: 'active'
         },
         startDate: {
@@ -134,18 +127,35 @@ const organizationSchema = new mongoose.Schema({
         stripeSubscriptionId: String
     },
 
+    // ============================================
+    // STATUS - Keep
+    // ============================================
     isActive: {
         type: Boolean,
         default: true
     },
+    status: {
+        type: String,
+        enum: ['active', 'suspended', 'trial', 'inactive', 'pending'],
+        default: 'active'
+    },
+    isVerified: {
+        type: Boolean,
+        default: false
+    },
+    verificationDate: Date,
     
-    // Parent-Child Relationship
+    // ============================================
+    // HIERARCHY - Keep
+    // ============================================
     parentOrganization: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Organization'
     },
     
-    // Branches
+    // ============================================
+    // BRANCHES - Keep (physical locations)
+    // ============================================
     branches: [{
         name: {
             type: String,
@@ -171,26 +181,13 @@ const organizationSchema = new mongoose.Schema({
         isActive: {
             type: Boolean,
             default: true
-        },
-        settings: {
-            timezone: String,
-            currency: String
         }
+        // Removed branch-specific settings - these should come from OrganizationSettings
     }],
     
-    // Status
-    status: {
-        type: String,
-        enum: ['active', 'suspended', 'trial', 'inactive', 'pending'],
-        default: 'active'  // ✅ changed default to active
-    },
-    isVerified: {
-        type: Boolean,
-        default: false
-    },
-    verificationDate: Date,
-    
-    // Modules
+    // ============================================
+    // MODULES - Keep (what's installed)
+    // ============================================
     installedModules: [{
         module: {
             type: mongoose.Schema.Types.ObjectId,
@@ -212,35 +209,33 @@ const organizationSchema = new mongoose.Schema({
         enabledFeatures: [String]
     }],
     
-    // Custom Fields
+    // ============================================
+    // CUSTOM FIELDS - Keep (dynamic data)
+    // ============================================
     customFields: {
         type: Map,
         of: mongoose.Schema.Types.Mixed
     },
     
-    // Metadata
+    // ============================================
+    // METADATA - Keep
+    // ============================================
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
     },
     logo: {
         type: String,
-        default: null
+        default: null  // Keep basic logo, detailed theme in Settings
     },
     favicon: {
         type: String,
-        default: null
-    },
-    theme: {
-        primaryColor: { type: String, default: '#3498db' },
-        secondaryColor: { type: String, default: '#2c3e50' },
-        accentColor: { type: String, default: '#e74c3c' },
-        fontFamily: { type: String, default: 'Inter' },
-        logoUrl: String,
-        faviconUrl: String
+        default: null  // Keep basic favicon, detailed theme in Settings
     },
     
-    // Audit
+    // ============================================
+    // AUDIT - Keep
+    // ============================================
     lastActive: Date,
     lastSubscriptionUpdate: Date,
     notes: String
@@ -250,14 +245,18 @@ const organizationSchema = new mongoose.Schema({
     toObject: { virtuals: true }
 });
 
-// Indexes
+// ============================================
+// INDEXES - Keep
+// ============================================
 organizationSchema.index({ email: 1 });
 organizationSchema.index({ status: 1 });
 organizationSchema.index({ 'subscription.plan': 1, 'subscription.status': 1 });
 organizationSchema.index({ parentOrganization: 1 });
 organizationSchema.index({ 'branches.code': 1 });
 
-// Pre-save: code & slug
+// ============================================
+// PRE-SAVE - Keep
+// ============================================
 organizationSchema.pre('save', function() {
     if (!this.organizationCode) {
         this.organizationCode = `ORG-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
@@ -267,7 +266,9 @@ organizationSchema.pre('save', function() {
     }
 });
 
-// Virtuals
+// ============================================
+// VIRTUALS - Keep/Update
+// ============================================
 organizationSchema.virtual('fullAddress').get(function() {
     if (!this.address) return '';
     return [
@@ -279,40 +280,99 @@ organizationSchema.virtual('fullAddress').get(function() {
     ].filter(Boolean).join(', ');
 });
 
-organizationSchema.virtual('memberCount', { ref: 'User', localField: '_id', foreignField: 'organization', count: true });
-organizationSchema.virtual('installedModulesCount', { ref: 'InstalledModule', localField: '_id', foreignField: 'organization', count: true });
+// Update memberCount to use OrganizationMember model
+organizationSchema.virtual('memberCount', { 
+    ref: 'OrganizationMember', 
+    localField: '_id', 
+    foreignField: 'organization', 
+    count: true 
+});
+
+organizationSchema.virtual('installedModulesCount', { 
+    ref: 'InstalledModule', 
+    localField: '_id', 
+    foreignField: 'organization', 
+    count: true 
+});
+
 organizationSchema.virtual('activeBranchesCount').get(function() {
     return this.branches?.filter(b => b.isActive).length || 0;
 });
+
 organizationSchema.virtual('isOnTrial').get(function() {
     return this.subscription?.plan === 'trial' && this.subscription?.status === 'active';
 });
+
 organizationSchema.virtual('subscriptionExpired').get(function() {
     return this.subscription?.endDate && this.subscription.endDate < new Date();
 });
 
-// Methods
+// New virtual to get settings
+organizationSchema.virtual('settings', {
+    ref: 'OrganizationSettings',
+    localField: '_id',
+    foreignField: 'organization',
+    justOne: true
+});
+
+// ============================================
+// METHODS - Keep/Update
+// ============================================
 organizationSchema.methods.hasFeature = function(featureKey) {
     return this.subscription?.features?.includes(featureKey) || false;
 };
+
+// Update canAddUser to use OrganizationMember
 organizationSchema.methods.canAddUser = async function() {
-    const userCount = await mongoose.model('User').countDocuments({ organization: this._id, isActive: true });
-    return userCount < (this.subscription?.maxUsers || Infinity);
+    const OrganizationMember = mongoose.model('OrganizationMember');
+    const memberCount = await OrganizationMember.countDocuments({ 
+        organization: this._id, 
+        status: 'active' 
+    });
+    return memberCount < (this.subscription?.maxUsers || Infinity);
 };
+
 organizationSchema.methods.isModuleInstalled = function(moduleSlug) {
     return this.installedModules?.some(im => im.module?.slug === moduleSlug && im.status === 'active') || false;
 };
+
 organizationSchema.methods.getModuleSettings = function(moduleSlug) {
     const installed = this.installedModules?.find(im => im.module?.slug === moduleSlug);
     return installed?.settings || {};
 };
+
 organizationSchema.methods.getBranchByCode = function(code) {
     return this.branches?.find(b => b.code === code);
 };
 
-// Statics
-organizationSchema.statics.findBySlug = function(slug) { return this.findOne({ slug }); };
-organizationSchema.statics.findByOrganizationCode = function(code) { return this.findOne({ organizationCode: code }); };
-organizationSchema.statics.findActive = function() { return this.find({ status: 'active' }); };
+// New method to get settings
+organizationSchema.methods.getSettings = async function() {
+    const OrganizationSettings = mongoose.model('OrganizationSettings');
+    let settings = await OrganizationSettings.findOne({ organization: this._id });
+    
+    if (!settings) {
+        // Create default settings if none exist
+        settings = await OrganizationSettings.create({
+            organization: this._id
+        });
+    }
+    
+    return settings;
+};
+
+// ============================================
+// STATICS - Keep
+// ============================================
+organizationSchema.statics.findBySlug = function(slug) { 
+    return this.findOne({ slug }); 
+};
+
+organizationSchema.statics.findByOrganizationCode = function(code) { 
+    return this.findOne({ organizationCode: code }); 
+};
+
+organizationSchema.statics.findActive = function() { 
+    return this.find({ status: 'active' }); 
+};
 
 module.exports = mongoose.model('Organization', organizationSchema);

@@ -17,6 +17,7 @@ const organizationSubscriptionSchema = new mongoose.Schema({
     },
     planCode: {
         type: String,
+            enum: ['trial', 'basic', 'pro', 'enterprise', 'custom'], // or similar
         trim: true
     },
     

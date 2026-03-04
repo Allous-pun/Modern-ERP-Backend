@@ -18,15 +18,20 @@ const requireModule = (moduleSlug) => {
                 });
             }
 
-            // Get organization ID from headers or user's default
+            // Get organization ID from headers or from user context
             let organizationId = req.headers['x-organization-id'];
             
-            if (!organizationId && req.user.defaultOrganization) {
-                organizationId = req.user.defaultOrganization;
+            // For organization users, get org from their context
+            if (!organizationId && req.user.organizationId) {
+                organizationId = req.user.organizationId;
             }
             
-            if (!organizationId && req.user.organizations && req.user.organizations.length > 0) {
-                organizationId = req.user.organizations[0];
+            // For supreme users, they need to specify org
+            if (!organizationId && req.user.isSupreme) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Supreme users must specify X-Organization-ID header'
+                });
             }
 
             if (!organizationId) {
@@ -112,10 +117,13 @@ const requireAnyModule = (moduleSlugs) => {
                 });
             }
 
-            let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
-            
-            if (!organizationId && req.user.organizations?.length > 0) {
-                organizationId = req.user.organizations[0];
+            let organizationId = req.headers['x-organization-id'] || req.user.organizationId;
+
+            if (!organizationId && req.user.isSupreme) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Supreme users must specify X-Organization-ID header'
+                });
             }
 
             if (!organizationId) {
@@ -168,10 +176,13 @@ const requireAllModules = (moduleSlugs) => {
                 });
             }
 
-            let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
-            
-            if (!organizationId && req.user.organizations?.length > 0) {
-                organizationId = req.user.organizations[0];
+            let organizationId = req.headers['x-organization-id'] || req.user.organizationId;
+
+            if (!organizationId && req.user.isSupreme) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Supreme users must specify X-Organization-ID header'
+                });
             }
 
             if (!organizationId) {
@@ -235,10 +246,13 @@ const requireFeature = (moduleSlug, featureKey) => {
                 });
             }
 
-            let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
-            
-            if (!organizationId && req.user.organizations?.length > 0) {
-                organizationId = req.user.organizations[0];
+            let organizationId = req.headers['x-organization-id'] || req.user.organizationId;
+
+            if (!organizationId && req.user.isSupreme) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Supreme users must specify X-Organization-ID header'
+                });
             }
 
             if (!organizationId) {
@@ -303,11 +317,7 @@ const getActiveModules = async (req, res) => {
             });
         }
 
-        let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
-        
-        if (!organizationId && req.user.organizations?.length > 0) {
-            organizationId = req.user.organizations[0];
-        }
+        let organizationId = req.headers['x-organization-id'] || req.user.organizationId;
 
         if (!organizationId) {
             return res.status(400).json({

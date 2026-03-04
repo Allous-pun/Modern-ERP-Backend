@@ -6,12 +6,11 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "seed": "node src/seeders/rolesPermissions.seeder.js",
     "fix:permissions": "node src/seeders/fixSuperAdminPermissions.js",
-    "seed:modules": "node src/seeders/moduleSeeder.js",
     "fix:org": "node src/seeders/fixOrganization.js",
     "migrate:multitenant": "node src/seeders/migrateToMultiTenant.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "seed": "node src/seeders/seedRolesPermissions.js",
+    "seed:modules": "node src/seeders/moduleSeeder.js"
   },
   "keywords": [],
   "author": "",

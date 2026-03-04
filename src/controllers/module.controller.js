@@ -25,7 +25,12 @@ const getAvailableModules = async (req, res) => {
             .sort({ displayOrder: 1, name: 1 });
         
         // Get user's organization
-        let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
+        let organizationId = req.headers['x-organization-id'];
+        
+        // For organization users, get from user object
+        if (!organizationId && !req.user.isSupreme && req.user.organizationId) {
+            organizationId = req.user.organizationId;
+        }
         
         let installedModules = [];
         if (organizationId) {
@@ -84,15 +89,69 @@ const getModuleBySlug = async (req, res) => {
 
 // ========== INSTALLED MODULES ENDPOINTS ==========
 
+// @desc    Get active modules for sidebar
+// @route   GET /api/modules/active
+// @access  Private
+const getActiveModules = async (req, res) => {
+    try {
+        let organizationId = req.headers['x-organization-id'];
+        
+        if (!organizationId && !req.user.isSupreme && req.user.organizationId) {
+            organizationId = req.user.organizationId;
+        }
+
+        if (!organizationId) {
+            return res.status(400).json({
+                success: false,
+                message: 'No organization specified'
+            });
+        }
+
+        const installedModules = await InstalledModule.find({
+            organization: organizationId,
+            status: { $in: ['active', 'trial'] }
+        })
+        .populate('module')
+        .sort({ 'module.displayOrder': 1 });
+
+        const activeModules = installedModules.map(im => ({
+            id: im.module._id,
+            name: im.module.name,
+            slug: im.module.slug,
+            icon: im.module.icon,
+            color: im.module.color,
+            routeBase: im.module.routeBase,
+            sidebarGroup: im.module.sidebarGroup,
+            displayOrder: im.module.displayOrder,
+            status: im.status,
+            enabledFeatures: im.enabledFeatures,
+            settings: im.settings
+        }));
+
+        res.status(200).json({
+            success: true,
+            count: activeModules.length,
+            data: activeModules
+        });
+    } catch (error) {
+        console.error('Get active modules error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch active modules'
+        });
+    }
+};
+
 // @desc    Get installed modules for current organization
 // @route   GET /api/modules/installed
 // @access  Private
 const getInstalledModules = async (req, res) => {
     try {
-        let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
+        let organizationId = req.headers['x-organization-id'];
         
-        if (!organizationId && req.user.organizations?.length > 0) {
-            organizationId = req.user.organizations[0];
+        // For organization users, get from user object
+        if (!organizationId && !req.user.isSupreme && req.user.organizationId) {
+            organizationId = req.user.organizationId;
         }
 
         if (!organizationId) {
@@ -105,13 +164,44 @@ const getInstalledModules = async (req, res) => {
         const installedModules = await InstalledModule.find({
             organization: organizationId
         })
-        .populate('module')
-        .populate('installedBy', 'firstName lastName email');
+        .populate('module');
+        
+        // Populate installedBy based on user type
+        const populatedModules = await Promise.all(installedModules.map(async (im) => {
+            const moduleObj = im.toObject();
+            
+            if (im.installedBy) {
+                // Check if it's a Supreme User
+                const supremeUser = await User.findById(im.installedBy).select('firstName lastName email');
+                if (supremeUser) {
+                    moduleObj.installedBy = {
+                        id: supremeUser._id,
+                        name: `${supremeUser.firstName} ${supremeUser.lastName}`,
+                        email: supremeUser.email,
+                        type: 'supreme'
+                    };
+                } else {
+                    // Check if it's an Organization Member
+                    const orgMember = await OrganizationMember.findById(im.installedBy)
+                        .select('personalInfo.firstName personalInfo.lastName personalInfo.email');
+                    if (orgMember) {
+                        moduleObj.installedBy = {
+                            id: orgMember._id,
+                            name: orgMember.fullName,
+                            email: orgMember.personalInfo.email,
+                            type: 'member'
+                        };
+                    }
+                }
+            }
+            
+            return moduleObj;
+        }));
         
         res.status(200).json({
             success: true,
-            count: installedModules.length,
-            data: installedModules
+            count: populatedModules.length,
+            data: populatedModules
         });
     } catch (error) {
         console.error('Get installed modules error:', error);
@@ -130,25 +220,12 @@ const installModule = async (req, res) => {
         const { slug } = req.params;
         const settings = req.body?.settings || {};
         
-        // Get user
-        const user = await User.findById(req.user.userId);
-        
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
-        }
-
         // Determine organization ID
         let organizationId = req.headers['x-organization-id'];
         
-        if (!organizationId && user.defaultOrganization) {
-            organizationId = user.defaultOrganization;
-        }
-        
-        if (!organizationId && user.organizations && user.organizations.length > 0) {
-            organizationId = user.organizations[0];
+        // For organization users, get from user object
+        if (!organizationId && !req.user.isSupreme && req.user.organizationId) {
+            organizationId = req.user.organizationId;
         }
 
         if (!organizationId) {
@@ -167,18 +244,20 @@ const installModule = async (req, res) => {
             });
         }
 
-        // Verify user belongs to this organization
-        const member = await OrganizationMember.findOne({
-            user: user._id,
-            organization: organizationId,
-            status: 'active'
-        });
-
-        if (!member) {
-            return res.status(403).json({
-                success: false,
-                message: 'You do not have access to this organization'
+        // For organization users, verify they belong to this organization
+        if (!req.user.isSupreme) {
+            const member = await OrganizationMember.findOne({
+                _id: req.user.memberId,
+                organization: organizationId,
+                status: 'active'
             });
+
+            if (!member) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have access to this organization'
+                });
+            }
         }
 
         // Find the module
@@ -237,12 +316,14 @@ const installModule = async (req, res) => {
             });
         }
         
-        // Install module
+        // Install module - use appropriate user ID
+        const installedBy = req.user.isSupreme ? req.user.userId : req.user.memberId;
+        
         const installedModule = await InstalledModule.create({
             organization: organizationId,
             module: module._id,
             moduleSlug: module.slug,
-            installedBy: user._id,
+            installedBy,
             settings,
             enabledFeatures: module.features.map(f => f.key),
             status: module.trialAvailable ? 'trial' : 'active',
@@ -255,29 +336,27 @@ const installModule = async (req, res) => {
             }
         });
 
-        // Optional: Auto-assign module permissions to Organization Admin role
-        // This is a nice-to-have feature
+        // Optional: Auto-assign module permissions to Super Administrator role
         try {
-            const orgAdminRole = await Role.findOne({ 
-                name: 'Organization Admin',
-                organization: organizationId 
+            const superAdminRole = await Role.findOne({ 
+                name: 'Super Administrator'
             });
             
-            if (orgAdminRole) {
+            if (superAdminRole) {
                 // Get all permissions for this module
                 const Permission = require('../models/permission.model');
                 const modulePermissions = await Permission.find({ 
                     module: module.permissionPrefix 
                 });
                 
-                // Add these permissions to the Organization Admin role
+                // Add these permissions to the Super Administrator role
                 const newPermissions = modulePermissions
                     .map(p => p._id)
-                    .filter(id => !orgAdminRole.permissions.includes(id));
+                    .filter(id => !superAdminRole.permissions.includes(id));
                 
                 if (newPermissions.length > 0) {
-                    orgAdminRole.permissions.push(...newPermissions);
-                    await orgAdminRole.save();
+                    superAdminRole.permissions.push(...newPermissions);
+                    await superAdminRole.save();
                 }
             }
         } catch (roleError) {
@@ -287,12 +366,33 @@ const installModule = async (req, res) => {
         
         // Populate for response
         await installedModule.populate('module');
-        await installedModule.populate('installedBy', 'firstName lastName email');
+        
+        // Populate installedBy based on user type
+        const result = installedModule.toObject();
+        
+        if (req.user.isSupreme) {
+            const user = await User.findById(req.user.userId).select('firstName lastName email');
+            result.installedBy = user ? {
+                id: user._id,
+                name: `${user.firstName} ${user.lastName}`,
+                email: user.email,
+                type: 'supreme'
+            } : installedModule.installedBy;
+        } else {
+            const member = await OrganizationMember.findById(req.user.memberId)
+                .select('personalInfo.firstName personalInfo.lastName personalInfo.email');
+            result.installedBy = member ? {
+                id: member._id,
+                name: member.fullName,
+                email: member.personalInfo.email,
+                type: 'member'
+            } : installedModule.installedBy;
+        }
         
         res.status(201).json({
             success: true,
             message: 'Module installed successfully',
-            data: installedModule
+            data: result
         });
     } catch (error) {
         console.error('Install module error:', error);
@@ -310,16 +410,19 @@ const uninstallModule = async (req, res) => {
     try {
         const { slug } = req.params;
         
-        const user = await User.findById(req.user.userId);
+        // Determine organization ID
+        let organizationId = req.headers['x-organization-id'];
         
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found'
-            });
+        if (!organizationId && !req.user.isSupreme && req.user.organizationId) {
+            organizationId = req.user.organizationId;
         }
 
-        let organizationId = req.headers['x-organization-id'] || user.defaultOrganization;
+        if (!organizationId) {
+            return res.status(400).json({
+                success: false,
+                message: 'No organization specified'
+            });
+        }
         
         const module = await Module.findOne({ slug });
         
@@ -425,7 +528,18 @@ const checkModuleInstalled = async (req, res) => {
     try {
         const { slug } = req.params;
         
-        let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
+        let organizationId = req.headers['x-organization-id'];
+        
+        if (!organizationId && !req.user.isSupreme && req.user.organizationId) {
+            organizationId = req.user.organizationId;
+        }
+
+        if (!organizationId) {
+            return res.status(400).json({
+                success: false,
+                message: 'No organization specified'
+            });
+        }
         
         const module = await Module.findOne({ slug });
         
@@ -464,9 +578,11 @@ const checkModuleInstalled = async (req, res) => {
 module.exports = {
     getAvailableModules,
     getModuleBySlug,
+    getActiveModules,
     getInstalledModules,
     installModule,
     uninstallModule,
     updateModuleSettings,
-    checkModuleInstalled
+    checkModuleInstalled,
+    getActiveModules
 };

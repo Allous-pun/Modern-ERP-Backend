@@ -6,7 +6,7 @@ const Organization = require('../models/organization.model');
  * Middleware to set organization context from request
  * Organization can come from:
  * 1. Header: X-Organization-ID or X-Organization-Slug
- * 2. User's default organization
+ * 2. Member's default organization (from token)
  */
 const setOrganizationContext = async (req, res, next) => {
     try {
@@ -15,6 +15,11 @@ const setOrganizationContext = async (req, res, next) => {
                 success: false,
                 message: 'Authentication required'
             });
+        }
+
+        // Supreme users don't need organization context
+        if (req.user.isSupreme) {
+            return next();
         }
 
         let organizationId = req.headers['x-organization-id'];
@@ -28,11 +33,14 @@ const setOrganizationContext = async (req, res, next) => {
             }
         }
 
-        // If no organization specified, use user's default
-        if (!organizationId) {
-            const User = require('../models/user.model');
-            const user = await User.findById(req.user.userId);
-            organizationId = user?.defaultOrganization;
+        // If no organization specified, check if user has a default
+        // (This would come from the member document - you might want to add a default flag)
+        if (!organizationId && req.user.memberId) {
+            // Use the organization from the member
+            const member = await OrganizationMember.findById(req.user.memberId);
+            if (member) {
+                organizationId = member.organization.toString();
+            }
         }
 
         if (!organizationId) {
@@ -42,12 +50,12 @@ const setOrganizationContext = async (req, res, next) => {
             });
         }
 
-        // Verify user belongs to this organization
+        // Verify member belongs to this organization
         const member = await OrganizationMember.findOne({
-            user: req.user.userId,
+            _id: req.user.memberId,  // ✅ Use memberId from token
             organization: organizationId,
             status: 'active'
-        });
+        }).populate('roles');
 
         if (!member) {
             return res.status(403).json({
@@ -60,9 +68,11 @@ const setOrganizationContext = async (req, res, next) => {
         req.organization = {
             id: organizationId,
             memberId: member._id,
+            member: member,
             roles: member.roles,
             jobTitle: member.jobTitle,
-            department: member.department
+            department: member.department,
+            isSuperAdmin: member.roles?.some(r => r.name === 'Super Administrator') || false
         };
 
         next();
@@ -89,11 +99,12 @@ const requireOrganizationRole = (allowedRoles) => {
                 });
             }
 
-            const OrganizationMember = require('../models/organizationMember.model');
-            const member = await OrganizationMember.findById(req.organization.memberId)
-                .populate('roles');
+            // Super Administrators have all roles
+            if (req.organization.isSuperAdmin) {
+                return next();
+            }
 
-            const hasAllowedRole = member.roles.some(role => 
+            const hasAllowedRole = req.organization.roles.some(role => 
                 allowedRoles.includes(role.name)
             );
 
@@ -119,7 +130,7 @@ const requireOrganizationRole = (allowedRoles) => {
  * Middleware to check if user is organization admin
  */
 const requireOrganizationAdmin = async (req, res, next) => {
-    return requireOrganizationRole(['Organization Admin', 'Super Administrator'])(req, res, next);
+    return requireOrganizationRole(['Super Administrator', 'Organization Admin'])(req, res, next);
 };
 
 module.exports = {

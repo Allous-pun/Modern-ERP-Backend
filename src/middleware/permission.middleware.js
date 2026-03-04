@@ -1,40 +1,15 @@
 // src/middleware/permission.middleware.js
 const User = require('../models/user.model');
-const InstalledModule = require('../models/installedModule.model');
-const Module = require('../models/module.model');
-
-/**
- * Helper function to check if module is installed for organization
- */
-const checkModuleInstalled = async (userId, organizationId, permissionString) => {
-    try {
-        // Extract module from permission string (e.g., 'finance.create_invoice' -> 'finance')
-        const modulePrefix = permissionString.split('.')[0];
-        
-        const module = await Module.findOne({ permissionPrefix: modulePrefix });
-        if (!module) return true; // If no module mapping, allow (fallback)
-        
-        const installed = await InstalledModule.findOne({
-            organization: organizationId,
-            module: module._id,
-            status: { $in: ['active', 'trial'] }
-        });
-        
-        return !!installed;
-    } catch (error) {
-        console.error('Module check error:', error);
-        return false;
-    }
-};
+const OrganizationMember = require('../models/organizationMember.model');
 
 /**
  * Middleware to check if authenticated user has required permission
- * @param {string} requiredPermission - Permission string to check (e.g., 'finance.create_invoice')
+ * Works for both Supreme Users and Organization Members
+ * @param {string} requiredPermission - Permission string to check
  */
 const requirePermission = (requiredPermission) => {
     return async (req, res, next) => {
         try {
-            // User should already be attached by auth middleware
             if (!req.user) {
                 return res.status(401).json({
                     success: false,
@@ -42,56 +17,50 @@ const requirePermission = (requiredPermission) => {
                 });
             }
 
-            // Get organization ID
-            let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
-            
-            if (!organizationId && req.user.organizations?.length > 0) {
-                organizationId = req.user.organizations[0];
+            // ============================================
+            // SUPREME USER HANDLING
+            // ============================================
+            if (req.user.isSupreme) {
+                // Supreme users have all permissions
+                return next();
             }
 
-            if (!organizationId) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'No organization specified'
-                });
-            }
+            // ============================================
+            // ORGANIZATION MEMBER HANDLING
+            // ============================================
+            if (req.user.memberId) {
+                const member = await OrganizationMember.findById(req.user.memberId)
+                    .populate({
+                        path: 'roles',
+                        populate: {
+                            path: 'permissions',
+                            model: 'Permission'
+                        }
+                    });
 
-            // First check if the required module is installed for this organization
-            const isModuleInstalled = await checkModuleInstalled(
-                req.user.userId, 
-                organizationId, 
-                requiredPermission
-            );
+                if (!member) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Organization member not found'
+                    });
+                }
 
-            if (!isModuleInstalled) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'The required module is not installed for your organization',
-                    required: requiredPermission
-                });
-            }
+                // Check if member has Super Administrator role
+                const isSuperAdmin = member.roles?.some(role => role.name === 'Super Administrator');
+                if (isSuperAdmin) {
+                    return next();
+                }
 
-            // Get full user with roles and permissions
-            const user = await User.findById(req.user.userId)
-                .populate({
-                    path: 'roles',
-                    populate: {
-                        path: 'permissions',
-                        model: 'Permission'
+                // Check each role's permissions
+                for (const role of member.roles) {
+                    for (const permission of role.permissions) {
+                        const permString = `${permission.module}.${permission.resource}_${permission.action}`;
+                        if (permString === requiredPermission) {
+                            return next();
+                        }
                     }
-                });
+                }
 
-            if (!user) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'User not found'
-                });
-            }
-
-            // Check if user has the permission
-            const hasPermission = await user.hasPermission(requiredPermission);
-
-            if (!hasPermission) {
                 return res.status(403).json({
                     success: false,
                     message: 'Access denied. Insufficient permissions.',
@@ -99,7 +68,12 @@ const requirePermission = (requiredPermission) => {
                 });
             }
 
-            next();
+            // If we get here, user type is unknown
+            return res.status(403).json({
+                success: false,
+                message: 'Unable to verify permissions'
+            });
+
         } catch (error) {
             console.error('Permission check error:', error);
             return res.status(500).json({
@@ -111,7 +85,7 @@ const requirePermission = (requiredPermission) => {
 };
 
 /**
- * Middleware to check if user has any of the required permissions
+ * Check if user has any of the required permissions
  * @param {string[]} requiredPermissions - Array of permission strings
  */
 const requireAnyPermission = (requiredPermissions) => {
@@ -124,44 +98,67 @@ const requireAnyPermission = (requiredPermissions) => {
                 });
             }
 
-            let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
-
-            const user = await User.findById(req.user.userId)
-                .populate({
-                    path: 'roles',
-                    populate: {
-                        path: 'permissions',
-                        model: 'Permission'
-                    }
-                });
-
-            if (!user) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'User not found'
-                });
+            // ============================================
+            // SUPREME USER HANDLING
+            // ============================================
+            if (req.user.isSupreme) {
+                return next();
             }
 
-            // Check each permission for module installation
-            for (const permission of requiredPermissions) {
-                const isModuleInstalled = await checkModuleInstalled(
-                    req.user.userId, 
-                    organizationId, 
-                    permission
-                );
+            // ============================================
+            // ORGANIZATION MEMBER HANDLING
+            // ============================================
+            if (req.user.memberId) {
+                const member = await OrganizationMember.findById(req.user.memberId)
+                    .populate({
+                        path: 'roles',
+                        populate: {
+                            path: 'permissions',
+                            model: 'Permission'
+                        }
+                    });
+
+                if (!member) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Organization member not found'
+                    });
+                }
+
+                // Check if member has Super Administrator role
+                const isSuperAdmin = member.roles?.some(role => role.name === 'Super Administrator');
+                if (isSuperAdmin) {
+                    return next();
+                }
+
+                // Collect all permission strings for this member
+                const userPermissions = new Set();
                 
-                if (isModuleInstalled) {
-                    const hasPermission = await user.hasPermission(permission);
-                    if (hasPermission) {
-                        return next();
+                for (const role of member.roles) {
+                    for (const permission of role.permissions) {
+                        const permString = `${permission.module}.${permission.resource}_${permission.action}`;
+                        userPermissions.add(permString);
                     }
                 }
+
+                // Check if user has ANY of the required permissions
+                const hasAny = requiredPermissions.some(perm => userPermissions.has(perm));
+
+                if (!hasAny) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Access denied. Need one of: ' + requiredPermissions.join(', ')
+                    });
+                }
+
+                return next();
             }
 
             return res.status(403).json({
                 success: false,
-                message: 'Access denied. Need one of: ' + requiredPermissions.join(', ')
+                message: 'Unable to verify permissions'
             });
+
         } catch (error) {
             console.error('Permission check error:', error);
             return res.status(500).json({
@@ -173,7 +170,7 @@ const requireAnyPermission = (requiredPermissions) => {
 };
 
 /**
- * Middleware to check if user has all required permissions
+ * Check if user has all required permissions
  * @param {string[]} requiredPermissions - Array of permission strings
  */
 const requireAllPermissions = (requiredPermissions) => {
@@ -186,49 +183,67 @@ const requireAllPermissions = (requiredPermissions) => {
                 });
             }
 
-            let organizationId = req.headers['x-organization-id'] || req.user.defaultOrganization;
-
-            const user = await User.findById(req.user.userId)
-                .populate({
-                    path: 'roles',
-                    populate: {
-                        path: 'permissions',
-                        model: 'Permission'
-                    }
-                });
-
-            if (!user) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'User not found'
-                });
+            // ============================================
+            // SUPREME USER HANDLING
+            // ============================================
+            if (req.user.isSupreme) {
+                return next();
             }
 
-            // Check all permissions
-            for (const permission of requiredPermissions) {
-                const isModuleInstalled = await checkModuleInstalled(
-                    req.user.userId, 
-                    organizationId, 
-                    permission
-                );
+            // ============================================
+            // ORGANIZATION MEMBER HANDLING
+            // ============================================
+            if (req.user.memberId) {
+                const member = await OrganizationMember.findById(req.user.memberId)
+                    .populate({
+                        path: 'roles',
+                        populate: {
+                            path: 'permissions',
+                            model: 'Permission'
+                        }
+                    });
+
+                if (!member) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Organization member not found'
+                    });
+                }
+
+                // Check if member has Super Administrator role
+                const isSuperAdmin = member.roles?.some(role => role.name === 'Super Administrator');
+                if (isSuperAdmin) {
+                    return next();
+                }
+
+                // Collect all permission strings for this member
+                const userPermissions = new Set();
                 
-                if (!isModuleInstalled) {
+                for (const role of member.roles) {
+                    for (const permission of role.permissions) {
+                        const permString = `${permission.module}.${permission.resource}_${permission.action}`;
+                        userPermissions.add(permString);
+                    }
+                }
+
+                // Check if user has ALL required permissions
+                const hasAll = requiredPermissions.every(perm => userPermissions.has(perm));
+
+                if (!hasAll) {
                     return res.status(403).json({
                         success: false,
-                        message: `Module for permission '${permission}' is not installed`
+                        message: 'Access denied. Need all of: ' + requiredPermissions.join(', ')
                     });
                 }
 
-                const hasPermission = await user.hasPermission(permission);
-                if (!hasPermission) {
-                    return res.status(403).json({
-                        success: false,
-                        message: `Missing required permission: ${permission}`
-                    });
-                }
+                return next();
             }
 
-            next();
+            return res.status(403).json({
+                success: false,
+                message: 'Unable to verify permissions'
+            });
+
         } catch (error) {
             console.error('Permission check error:', error);
             return res.status(500).json({

@@ -12,7 +12,7 @@ const organizationSettingsSchema = new mongoose.Schema({
     // Localization
     timezone: {
         type: String,
-        default: 'UTC'
+        default: 'Africa/Nairobi'  // East African Time (EAT)
     },
     dateFormat: {
         type: String,
@@ -41,7 +41,7 @@ const organizationSettingsSchema = new mongoose.Schema({
     },
     baseCurrency: {
         type: String,
-        default: 'USD',
+        default: 'KSH',
         uppercase: true
     },
     multiCurrencyEnabled: {

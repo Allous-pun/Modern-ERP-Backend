@@ -1,6 +1,7 @@
 // src/controllers/role.controller.js
 const Role = require('../models/role.model');
 const Permission = require('../models/permission.model');
+const OrganizationMember = require('../models/organizationMember.model');
 const User = require('../models/user.model');
 
 // @desc    Get all roles
@@ -172,7 +173,19 @@ const deleteRole = async (req, res) => {
             });
         }
 
-        // Check if role is assigned to any users
+        // Check if role is assigned to any organization members
+        const membersWithRole = await OrganizationMember.countDocuments({ 
+            roles: role._id 
+        });
+        
+        if (membersWithRole > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Cannot delete role assigned to organization members'
+            });
+        }
+
+        // Check if role is assigned to any supreme users
         const usersWithRole = await User.countDocuments({ roles: role._id });
         if (usersWithRole > 0) {
             return res.status(400).json({
@@ -196,8 +209,53 @@ const deleteRole = async (req, res) => {
     }
 };
 
-// @desc    Assign role to user
-// @route   POST /api/roles/assign/:userId
+// @desc    Assign role to organization member
+// @route   POST /api/roles/assign/member/:memberId
+// @access  Private (requires system.users_manage)
+const assignRoleToMember = async (req, res) => {
+    try {
+        const { roleIds } = req.body;
+        const member = await OrganizationMember.findById(req.params.memberId);
+
+        if (!member) {
+            return res.status(404).json({
+                success: false,
+                message: 'Organization member not found'
+            });
+        }
+
+        // Verify roles exist
+        const roles = await Role.find({ _id: { $in: roleIds } });
+        if (roles.length !== roleIds.length) {
+            return res.status(400).json({
+                success: false,
+                message: 'One or more roles are invalid'
+            });
+        }
+
+        member.roles = roleIds;
+        await member.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Roles assigned successfully',
+            data: {
+                memberId: member._id,
+                name: `${member.personalInfo.firstName} ${member.personalInfo.lastName}`,
+                roles: roles.map(r => ({ id: r._id, name: r.name }))
+            }
+        });
+    } catch (error) {
+        console.error('Assign role error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to assign roles'
+        });
+    }
+};
+
+// @desc    Assign role to supreme user
+// @route   POST /api/roles/assign/user/:userId
 // @access  Private (requires system.users_manage)
 const assignRoleToUser = async (req, res) => {
     try {
@@ -207,7 +265,7 @@ const assignRoleToUser = async (req, res) => {
         if (!user) {
             return res.status(404).json({
                 success: false,
-                message: 'User not found'
+                message: 'Supreme user not found'
             });
         }
 
@@ -228,6 +286,7 @@ const assignRoleToUser = async (req, res) => {
             message: 'Roles assigned successfully',
             data: {
                 userId: user._id,
+                email: user.email,
                 roles: roles.map(r => ({ id: r._id, name: r.name }))
             }
         });
@@ -240,7 +299,70 @@ const assignRoleToUser = async (req, res) => {
     }
 };
 
-// @desc    Get user permissions
+// @desc    Get organization member permissions
+// @route   GET /api/roles/member/:memberId/permissions
+// @access  Private (requires system.users_view)
+const getMemberPermissions = async (req, res) => {
+    try {
+        const member = await OrganizationMember.findById(req.params.memberId)
+            .populate({
+                path: 'roles',
+                populate: {
+                    path: 'permissions',
+                    model: 'Permission'
+                }
+            });
+
+        if (!member) {
+            return res.status(404).json({
+                success: false,
+                message: 'Organization member not found'
+            });
+        }
+
+        // Collect all unique permissions
+        const permissions = new Set();
+        const permissionDetails = [];
+
+        for (const role of member.roles) {
+            for (const permission of role.permissions) {
+                const permString = `${permission.module}.${permission.resource}_${permission.action}`;
+                if (!permissions.has(permString)) {
+                    permissions.add(permString);
+                    permissionDetails.push({
+                        id: permission._id,
+                        name: permission.name,
+                        module: permission.module,
+                        resource: permission.resource,
+                        action: permission.action,
+                        permissionString: permString
+                    });
+                }
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            data: {
+                memberId: member._id,
+                name: `${member.personalInfo.firstName} ${member.personalInfo.lastName}`,
+                email: member.personalInfo.email,
+                organizationId: member.organization,
+                roles: member.roles.map(r => ({ id: r._id, name: r.name })),
+                permissions: permissionDetails,
+                permissionStrings: Array.from(permissions)
+            }
+        });
+    } catch (error) {
+        console.error('Get member permissions error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch member permissions'
+        });
+    }
+};
+
+// @desc    Get supreme user permissions
 // @route   GET /api/roles/user/:userId/permissions
 // @access  Private (requires system.users_view)
 const getUserPermissions = async (req, res) => {
@@ -257,7 +379,7 @@ const getUserPermissions = async (req, res) => {
         if (!user) {
             return res.status(404).json({
                 success: false,
-                message: 'User not found'
+                message: 'Supreme user not found'
             });
         }
 
@@ -308,6 +430,8 @@ module.exports = {
     createRole,
     updateRole,
     deleteRole,
-    assignRoleToUser,
-    getUserPermissions
+    assignRoleToMember,  // New: for organization members
+    assignRoleToUser,    // Existing: for supreme users
+    getMemberPermissions, // New: for organization members
+    getUserPermissions    // Existing: for supreme users
 };
