@@ -102,14 +102,14 @@ const registerOrganization = async (req, res) => {
             },
             // Basic subscription info (will be overridden by detailed subscription)
             subscription: {
-                plan: 'trial',
-                status: 'trial',
+                plan: 'active',
+                status: 'active',
                 startDate: new Date(),
                 endDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 days trial
                 maxUsers: 5,
                 maxStorage: 1024
             },
-            status: 'trial',
+            status: 'active',
             isActive: true,
             isVerified: false
         });
