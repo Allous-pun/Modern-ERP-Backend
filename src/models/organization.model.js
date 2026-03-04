@@ -94,8 +94,8 @@ const organizationSchema = new mongoose.Schema({
     subscription: {
         plan: {
             type: String,
-            enum: ['trial', 'basic', 'professional', 'enterprise'],
-            default: 'trial'
+            enum: ['active', 'trial', 'basic', 'professional', 'enterprise'],
+            default: 'active'
         },
         status: {
             type: String,

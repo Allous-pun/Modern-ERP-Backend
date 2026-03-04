@@ -12,12 +12,12 @@ const organizationSubscriptionSchema = new mongoose.Schema({
     // Plan details
     planName: {
         type: String,
-        enum: ['trial', 'basic', 'professional', 'enterprise', 'custom'],
-        default: 'trial'
+        enum: ['active', 'trial', 'basic', 'professional', 'enterprise', 'custom'],
+        default: 'active'
     },
     planCode: {
         type: String,
-            enum: ['trial', 'basic', 'pro', 'enterprise', 'custom'], // or similar
+            enum: ['active', 'trial', 'basic', 'pro', 'enterprise', 'custom'], // or similar
         trim: true
     },
     
