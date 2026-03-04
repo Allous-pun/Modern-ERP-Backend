@@ -41,73 +41,13 @@ const protect = async (req, res, next) => {
         }
 
         // ============================================
-        // SUPREME USER HANDLING
+        // IMPROVED TOKEN DECODING LOGIC
         // ============================================
-        if (decoded.userId && decoded.isSupreme) {
-            const user = await User.findById(decoded.userId)
-                .select('-password -actionLog -apiKeys -twoFactorSecret -passwordResetToken -passwordResetExpires');
-
-            if (!user) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Supreme user no longer exists'
-                });
-            }
-
-            if (!user.isActive) {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Supreme user account is deactivated'
-                });
-            }
-
-            req.user = {
-                // Core user info
-                id: user._id,
-                userId: user._id,
-                email: user.email,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                displayName: user.displayName,
-                
-                // User type
-                userType: 'supreme',
-                isSupreme: true,
-                isSuperAdmin: true,
-                
-                // Supreme user permissions (all true)
-                permissions: {
-                    canManageOrganizations: true,
-                    canViewAllOrganizations: true,
-                    canActivateOrganizations: true,
-                    canDeactivateOrganizations: true,
-                    canCreateOrganizations: true,
-                    canDeleteOrganizations: true,
-                    canManageSubscriptions: true,
-                    canUpdateSubscriptionPrice: true,
-                    canViewAllSubscriptions: true,
-                    canCancelSubscriptions: true,
-                    canAccessDashboard: true,
-                    canViewLogs: true,
-                    canManageSystem: true
-                },
-                
-                // Permission strings array
-                permissionsList: [
-                    'organization.view', 'organization.manage', 'organization.activate',
-                    'organization.deactivate', 'organization.create', 'organization.delete',
-                    'subscription.view', 'subscription.manage', 'subscription.update_price',
-                    'subscription.cancel', 'system.access', 'system.manage', 'logs.view'
-                ]
-            };
-
-            return next();
-        }
-
-        // ============================================
-        // ORGANIZATION MEMBER HANDLING
-        // ============================================
+        
+        // Case 1: Token has memberId (organization member with new token format)
         if (decoded.memberId) {
+            console.log('Processing organization member with memberId:', decoded.memberId);
+            
             const member = await OrganizationMember.findById(decoded.memberId)
                 .populate({
                     path: 'roles',
@@ -202,6 +142,7 @@ const protect = async (req, res, next) => {
                 // Core member info
                 id: member._id,
                 memberId: member._id,
+                userId: member._id, // Set both for compatibility
                 email: member.personalInfo.email,
                 firstName: member.personalInfo.firstName,
                 lastName: member.personalInfo.lastName,
@@ -252,6 +193,217 @@ const protect = async (req, res, next) => {
 
             return next();
         }
+        
+        // Case 2: Token has userId (could be supreme user OR old format organization member)
+        if (decoded.userId) {
+            console.log('Processing user with userId:', decoded.userId);
+            
+            // First, check if this userId exists in OrganizationMember (old token format)
+            const member = await OrganizationMember.findById(decoded.userId)
+                .populate({
+                    path: 'roles',
+                    populate: {
+                        path: 'permissions',
+                        model: 'Permission'
+                    }
+                });
+
+            if (member) {
+                // It's actually an organization member with old token format
+                console.log('Found organization member with old token format');
+                
+                // Check if member is active
+                if (member.status !== 'active') {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Member account is not active'
+                    });
+                }
+
+                // Get organization details
+                const organization = await Organization.findById(member.organization);
+                
+                if (!organization) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Organization not found'
+                    });
+                }
+
+                // Check if organization is active
+                if (!organization.isActive || organization.status !== 'active') {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Organization account is not active'
+                    });
+                }
+
+                // Check subscription status
+                const OrganizationSubscription = require('../models/organizationSubscription.model');
+                const subscription = await OrganizationSubscription.findOne({
+                    organization: member.organization
+                });
+
+                if (subscription && (subscription.status === 'expired' || subscription.status === 'cancelled')) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Organization subscription has expired'
+                    });
+                }
+
+                // Build permissions from roles
+                const permissionsList = [];
+                const permissionsMap = {};
+                
+                // Get all unique permissions from all roles
+                const allPermissions = new Map();
+                
+                for (const role of member.roles) {
+                    if (role.permissions && Array.isArray(role.permissions)) {
+                        for (const permission of role.permissions) {
+                            const permString = `${permission.module}.${permission.resource}_${permission.action}`;
+                            
+                            if (!allPermissions.has(permString)) {
+                                allPermissions.set(permString, permission);
+                                
+                                // Build structured permissions
+                                if (!permissionsMap[permission.module]) {
+                                    permissionsMap[permission.module] = {};
+                                }
+                                if (!permissionsMap[permission.module][permission.resource]) {
+                                    permissionsMap[permission.module][permission.resource] = [];
+                                }
+                                if (!permissionsMap[permission.module][permission.resource].includes(permission.action)) {
+                                    permissionsMap[permission.module][permission.resource].push(permission.action);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                permissionsList.push(...allPermissions.keys());
+
+                // Check if member has Super Administrator role
+                const isSuperAdmin = member.roles.some(role => role.name === 'Super Administrator');
+
+                req.user = {
+                    // Core member info
+                    id: member._id,
+                    memberId: member._id,
+                    userId: member._id, // Set both for compatibility
+                    email: member.personalInfo.email,
+                    firstName: member.personalInfo.firstName,
+                    lastName: member.personalInfo.lastName,
+                    displayName: member.personalInfo.displayName,
+                    avatar: member.avatar,
+                    
+                    // User type
+                    userType: 'organization',
+                    isSupreme: false,
+                    isSuperAdmin,
+                    
+                    // Organization info
+                    organizationId: member.organization.toString(),
+                    organization: {
+                        id: organization._id,
+                        name: organization.name,
+                        slug: organization.slug,
+                        email: organization.email,
+                        status: organization.status,
+                        isActive: organization.isActive
+                    },
+                    
+                    // Member info
+                    jobTitle: member.jobTitle,
+                    department: member.department,
+                    employeeId: member.employeeId,
+                    branch: member.branch,
+                    isBranchManager: member.isBranchManager,
+                    
+                    // Roles
+                    roles: member.roles.map(role => ({
+                        id: role._id,
+                        name: role.name,
+                        description: role.description,
+                        category: role.category,
+                        hierarchy: role.hierarchy
+                    })),
+                    roleIds: member.roles.map(role => role._id),
+                    
+                    // Permissions
+                    permissions: permissionsMap,
+                    permissionsList,
+                    
+                    // Member status
+                    status: member.status,
+                    joinedAt: member.joinedAt
+                };
+
+                return next();
+            } else {
+                // It's a supreme user
+                console.log('Processing supreme user');
+                
+                const user = await User.findById(decoded.userId)
+                    .select('-password -actionLog -apiKeys -twoFactorSecret -passwordResetToken -passwordResetExpires');
+
+                if (!user) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Supreme user no longer exists'
+                    });
+                }
+
+                if (!user.isActive) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Supreme user account is deactivated'
+                    });
+                }
+
+                req.user = {
+                    // Core user info
+                    id: user._id,
+                    userId: user._id,
+                    email: user.email,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    displayName: user.displayName,
+                    
+                    // User type
+                    userType: 'supreme',
+                    isSupreme: true,
+                    isSuperAdmin: true,
+                    
+                    // Supreme user permissions (all true)
+                    permissions: {
+                        canManageOrganizations: true,
+                        canViewAllOrganizations: true,
+                        canActivateOrganizations: true,
+                        canDeactivateOrganizations: true,
+                        canCreateOrganizations: true,
+                        canDeleteOrganizations: true,
+                        canManageSubscriptions: true,
+                        canUpdateSubscriptionPrice: true,
+                        canViewAllSubscriptions: true,
+                        canCancelSubscriptions: true,
+                        canAccessDashboard: true,
+                        canViewLogs: true,
+                        canManageSystem: true
+                    },
+                    
+                    // Permission strings array
+                    permissionsList: [
+                        'organization.view', 'organization.manage', 'organization.activate',
+                        'organization.deactivate', 'organization.create', 'organization.delete',
+                        'subscription.view', 'subscription.manage', 'subscription.update_price',
+                        'subscription.cancel', 'system.access', 'system.manage', 'logs.view'
+                    ]
+                };
+
+                return next();
+            }
+        }
 
         // If we get here, token is invalid
         return res.status(401).json({
@@ -268,6 +420,9 @@ const protect = async (req, res, next) => {
         });
     }
 };
+
+// The rest of the file remains unchanged
+// ... (all other middleware functions)
 
 /**
  * Restrict access to Supreme Users only
@@ -670,42 +825,60 @@ const optionalAuth = async (req, res, next) => {
             const decoded = verifyToken(token);
             
             if (decoded) {
-                if (decoded.userId && decoded.isSupreme) {
-                    const user = await User.findById(decoded.userId)
-                        .select('-password -actionLog -apiKeys -twoFactorSecret -passwordResetToken -passwordResetExpires');
-
-                    if (user && user.isActive) {
-                        req.user = {
-                            id: user._id,
-                            userId: user._id,
-                            email: user.email,
-                            firstName: user.firstName,
-                            lastName: user.lastName,
-                            displayName: user.displayName,
-                            userType: 'supreme',
-                            isSupreme: true,
-                            isSuperAdmin: true
-                        };
-                    }
-                } else if (decoded.memberId) {
-                    const member = await OrganizationMember.findById(decoded.memberId)
-                        .populate('roles');
-
+                // Check for memberId first (new token format)
+                if (decoded.memberId) {
+                    const member = await OrganizationMember.findById(decoded.memberId);
                     if (member && member.status === 'active') {
                         const organization = await Organization.findById(member.organization);
-                        
                         if (organization && organization.isActive) {
                             req.user = {
                                 id: member._id,
                                 memberId: member._id,
+                                userId: member._id,
                                 email: member.personalInfo.email,
                                 firstName: member.personalInfo.firstName,
                                 lastName: member.personalInfo.lastName,
                                 displayName: member.personalInfo.displayName,
                                 userType: 'organization',
                                 isSupreme: false,
-                                isSuperAdmin: member.roles?.some(r => r.name === 'Super Administrator'),
                                 organizationId: member.organization.toString()
+                            };
+                        }
+                    }
+                }
+                // Check for userId (could be supreme or old format)
+                else if (decoded.userId) {
+                    // Check if it's an organization member with old format
+                    const member = await OrganizationMember.findById(decoded.userId);
+                    if (member && member.status === 'active') {
+                        const organization = await Organization.findById(member.organization);
+                        if (organization && organization.isActive) {
+                            req.user = {
+                                id: member._id,
+                                memberId: member._id,
+                                userId: member._id,
+                                email: member.personalInfo.email,
+                                firstName: member.personalInfo.firstName,
+                                lastName: member.personalInfo.lastName,
+                                displayName: member.personalInfo.displayName,
+                                userType: 'organization',
+                                isSupreme: false,
+                                organizationId: member.organization.toString()
+                            };
+                        }
+                    } else {
+                        // It's a supreme user
+                        const user = await User.findById(decoded.userId);
+                        if (user && user.isActive) {
+                            req.user = {
+                                id: user._id,
+                                userId: user._id,
+                                email: user.email,
+                                firstName: user.firstName,
+                                lastName: user.lastName,
+                                displayName: user.displayName,
+                                userType: 'supreme',
+                                isSupreme: true
                             };
                         }
                     }

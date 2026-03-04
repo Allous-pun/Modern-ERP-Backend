@@ -1,8 +1,8 @@
 // src/controllers/organization-auth.controller.js
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const Invite = require('../models/invite.model');
 const OrganizationMember = require('../models/organizationMember.model');
-const { generateToken } = require('../utils/token.utils');
 
 /**
  * @desc    Register/accept invite and become organization member
@@ -75,8 +75,17 @@ const registerWithInvite = async (req, res) => {
         invite.acceptedAt = new Date();
         await invite.save();
 
-        // Generate token - RENAME THIS VARIABLE
-        const authToken = generateToken(member._id, invite.email); // ✅ Changed to authToken
+        // Generate token with BOTH memberId and userId for compatibility
+        const authToken = jwt.sign(
+            { 
+                memberId: member._id,
+                userId: member._id,              // Add for backward compatibility
+                email: member.personalInfo.email,
+                organizationId: member.organization.toString()
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
 
         await member.populate('roles', 'name description');
 
@@ -88,13 +97,15 @@ const registerWithInvite = async (req, res) => {
                     id: member._id,
                     name: member.fullName,
                     email: member.personalInfo.email,
+                    jobTitle: member.jobTitle,
+                    department: member.department,
                     roles: member.roles,
                     organization: {
                         id: invite.organization._id,
                         name: invite.organization.name
                     }
                 },
-                token: authToken // ✅ Use the renamed variable
+                token: authToken
             }
         });
 
@@ -142,8 +153,17 @@ const login = async (req, res) => {
         member.auth.lastLogin = new Date();
         await member.save();
 
-        // Generate token
-        const authToken = generateToken(member._id, member.personalInfo.email);
+        // Generate token with BOTH memberId and userId for compatibility
+        const authToken = jwt.sign(
+            { 
+                memberId: member._id,
+                userId: member._id,              // Add for backward compatibility
+                email: member.personalInfo.email,
+                organizationId: member.organization.toString()
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
 
         res.status(200).json({
             success: true,
@@ -152,9 +172,18 @@ const login = async (req, res) => {
                 member: {
                     id: member._id,
                     name: member.fullName,
+                    firstName: member.personalInfo.firstName,
+                    lastName: member.personalInfo.lastName,
                     email: member.personalInfo.email,
                     jobTitle: member.jobTitle,
-                    roles: member.roles
+                    department: member.department,
+                    roles: member.roles.map(role => ({
+                        id: role._id,
+                        name: role.name,
+                        description: role.description,
+                        category: role.category,
+                        hierarchy: role.hierarchy
+                    }))
                 },
                 token: authToken
             }
