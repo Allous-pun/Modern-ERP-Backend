@@ -680,6 +680,56 @@ const getMyProfile = async (req, res) => {
     }
 };
 
+// @desc    Update current member's own profile
+// @route   PUT /api/organizations/members/profile
+// @access  Private (Organization Members)
+const updateMyProfile = async (req, res) => {
+    try {
+        const { jobTitle, department, phoneNumber, dateOfBirth, gender } = req.body;
+
+        const member = await OrganizationMember.findOne({
+            _id: req.user.memberId,
+            organization: req.organization.id
+        });
+
+        if (!member) {
+            return res.status(404).json({
+                success: false,
+                message: 'Member not found'
+            });
+        }
+
+        // Update allowed fields (members can update their own limited info)
+        if (jobTitle) member.jobTitle = jobTitle;
+        if (department) member.department = department;
+        
+        // Update personal info
+        if (phoneNumber) member.personalInfo.phoneNumber = phoneNumber;
+        if (dateOfBirth) member.personalInfo.dateOfBirth = dateOfBirth;
+        if (gender) member.personalInfo.gender = gender;
+
+        await member.save();
+
+        res.status(200).json({
+            success: true,
+            message: 'Profile updated successfully',
+            data: {
+                _id: member._id,
+                personalInfo: member.personalInfo,
+                jobTitle: member.jobTitle,
+                department: member.department
+            }
+        });
+
+    } catch (error) {
+        console.error('Update profile error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update profile'
+        });
+    }
+};
+
 // ============================================
 // MEMBER MANAGEMENT (With Role Assignment)
 // ============================================
@@ -1249,12 +1299,12 @@ module.exports = {
     
     // Member Profile
     getMyProfile,
+    updateMyProfile,
     
     // Member Management
     inviteMember,
     getMembers,
     getMember,
-    getMyProfile,
     updateMemberRoles,
     updateMember,
     removeMember,

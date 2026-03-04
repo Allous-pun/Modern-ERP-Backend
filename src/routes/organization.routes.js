@@ -18,6 +18,7 @@ const {
     
     // Member Profile
     getMyProfile,
+    updateMyProfile,
     
     // Member Management
     inviteMember,
@@ -118,6 +119,13 @@ router.get('/subscription', getSubscription);
  * @access  Private (Organization Members)
  */
 router.get('/members/profile', getMyProfile);
+
+/**
+ * @route   PUT /api/organizations/members/profile
+ * @desc    Update current member's own profile
+ * @access  Private (Organization Members)
+ */
+router.put('/members/profile', updateMyProfile);
 
 /**
  * @route   GET /api/organizations/members
