@@ -16,6 +16,9 @@ const {
     // Dashboard
     getDashboardStats,
     
+    // Member Profile
+    getMyProfile,
+    
     // Member Management
     inviteMember,
     getMembers,
@@ -109,6 +112,13 @@ router.get('/subscription', getSubscription);
 // ============================================
 // MEMBER MANAGEMENT
 // ============================================
+/**
+ * @route   GET /api/organizations/members/profile
+ * @desc    Get current member's profile
+ * @access  Private (Organization Members)
+ */
+router.get('/members/profile', getMyProfile);
+
 /**
  * @route   GET /api/organizations/members
  * @desc    Get all organization members

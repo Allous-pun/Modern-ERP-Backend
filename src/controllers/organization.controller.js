@@ -630,12 +630,65 @@ const getDashboardStats = async (req, res) => {
 };
 
 // ============================================
+// MEMBER PROFILE
+// ============================================
+
+/**
+ * @desc    Get current member profile
+ * @route   GET /api/organizations/members/profile
+ * @access  Private (Organization Members)
+ */
+const getMyProfile = async (req, res) => {
+    try {
+        const member = await OrganizationMember.findById(req.user.memberId)
+            .populate('roles', 'name description hierarchy category')
+            .populate('invitedBy', 'personalInfo.firstName personalInfo.lastName personalInfo.email')
+            .populate('reportsTo', 'personalInfo.firstName personalInfo.lastName jobTitle');
+
+        if (!member) {
+            return res.status(404).json({
+                success: false,
+                message: 'Member not found'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: {
+                _id: member._id,
+                personalInfo: member.personalInfo,
+                avatar: member.avatar,
+                jobTitle: member.jobTitle,
+                department: member.department,
+                employeeId: member.employeeId,
+                roles: member.roles,
+                reportsTo: member.reportsTo,
+                status: member.status,
+                joinedAt: member.joinedAt,
+                invitedBy: member.invitedBy,
+                lastActive: member.lastActive,
+                createdAt: member.createdAt,
+                organizationId: member.organization
+            }
+        });
+    } catch (error) {
+        console.error('Get my profile error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch profile'
+        });
+    }
+};
+
+// ============================================
 // MEMBER MANAGEMENT (With Role Assignment)
 // ============================================
 
-// @desc    Invite a new member to organization (with role assignment)
-// @route   POST /api/organizations/members/invite
-// @access  Private (Organization Admin only)
+/**
+ * @desc    Invite a new member to organization (with role assignment)
+ * @route   POST /api/organizations/members/invite
+ * @access  Private (Organization Admin only)
+ */
 const inviteMember = async (req, res) => {
     try {
         const { email, firstName, lastName, roleIds, jobTitle, department } = req.body;
@@ -670,7 +723,7 @@ const inviteMember = async (req, res) => {
         }
 
         // Check if inviter has permission to assign these roles
-        const inviter = await OrganizationMember.findById(req.user.memberId).populate('roles'); // ✅ FIXED: req.user.memberId
+        const inviter = await OrganizationMember.findById(req.user.memberId).populate('roles');
         if (!inviter) {
             return res.status(404).json({
                 success: false,
@@ -743,7 +796,7 @@ const inviteMember = async (req, res) => {
             jobTitle: jobTitle || null,
             department: department || null,
             status: 'active', // Set to active directly since we're creating the member
-            invitedBy: req.user.memberId, // ✅ FIXED: Use req.user.memberId
+            invitedBy: req.user.memberId,
             joinedAt: new Date()
         });
 
@@ -1194,10 +1247,14 @@ module.exports = {
     // Dashboard
     getDashboardStats,
     
+    // Member Profile
+    getMyProfile,
+    
     // Member Management
     inviteMember,
     getMembers,
     getMember,
+    getMyProfile,
     updateMemberRoles,
     updateMember,
     removeMember,
