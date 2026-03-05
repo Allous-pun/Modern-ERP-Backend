@@ -17,7 +17,7 @@ const supremeRoutes = require('./routes/supreme.routes');
 const organizationAuthRoutes = require('./routes/organization-auth.routes');
 
 // Import module-specific routes
-const systemRoutes = require('./routes/system.routes');
+const systemRoutes = require('./routes/system');  // CHANGED: from system.routes to system/index.js
 const securityRoutes = require('./routes/security.routes');
 const executiveRoutes = require('./routes/executive.routes');
 const financeRoutes = require('./routes/finance.routes');
@@ -52,6 +52,10 @@ if (process.env.NODE_ENV === 'development') {
     app.use(morgan('dev'));
 }
 
+// Add audit logger middleware (after auth, before routes)
+const auditLogger = require('./middleware/audit.middleware');
+app.use(auditLogger()); // This will log all authenticated requests
+
 // Routes
 app.use('/api/roles', roleRoutes);
 app.use('/api/permissions', permissionRoutes);
@@ -62,7 +66,7 @@ app.use('/api/supreme', supremeRoutes);
 app.use('/api/organization-auth', organizationAuthRoutes);
 
 // Register module routes
-app.use('/api/system', systemRoutes);
+app.use('/api/system', systemRoutes);  // This now points to the new system module
 app.use('/api/executive', executiveRoutes);
 app.use('/api/security', securityRoutes);
 app.use('/api/finance', financeRoutes);
