@@ -17,3 +17,5 @@ node src/seeders/migrations/010_add_post_permission.js
 node src/seeders/migrations/011_add_budget_permissions.js
 
 node src/seeders/migrations/012_add_reports_permission.js
+
+node src/seeders/migrations/013_add_treasury_permissions.js

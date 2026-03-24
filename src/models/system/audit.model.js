@@ -88,7 +88,8 @@ const auditSchema = new mongoose.Schema({
             'privacy', 'consent', 'dsr', 'breach', 'policy',
             'setting', 'subscription', 'member', 'invite', 'file',
             'report', 'report_template', 'scheduled_report',
-            'account', 'journal_entry', 'budget',  // ADDED: For finance accounts
+            'account', 'journal_entry', 'budget', 'bank_account',
+            'reconciliation', 'cash_flow_forecast',
             'other'
         ],
         required: true

@@ -7,11 +7,13 @@ const accountRoutes = require('./account.routes');
 const journalEntryRoutes = require('./journalEntry.routes');
 const budgetRoutes = require('./budget.routes');
 const reportsRoutes = require('./reports.routes');
+const treasuryRoutes = require('./treasury.routes');
 
 // Mount sub-modules
 router.use('/accounts', accountRoutes);
 router.use('/journal-entries', journalEntryRoutes);
 router.use('/budgets', budgetRoutes);
 router.use('/reports', reportsRoutes);
+router.use('/treasury', treasuryRoutes);
 
 module.exports = router;

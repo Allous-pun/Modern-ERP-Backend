@@ -9,6 +9,7 @@ const mongoose = require('mongoose');
 const JournalEntry = require('../../models/finance/journalEntry.model');
 const { Account } = require('../../models/finance/account.model');
 const FinanceBudget = require('../../models/finance/budget.model');
+const { BankAccount } = require('../../models/finance/treasury.model');
 
 /**
  * @desc    Get financial dashboard
@@ -754,6 +755,48 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
     // Get budget data from finance module
     const budgetData = await getBudgetDataForExecutive(organizationId, year || new Date().getFullYear());
     
+    // ==================== GET REAL TREASURY DATA ====================
+    // Get bank accounts from treasury module
+    const BankAccount = require('../../models/finance/treasury.model').BankAccount;
+    const bankAccounts = await BankAccount.find({
+        organization: organizationId,
+        isActive: true
+    }).lean();
+    
+    // Calculate total cash from bank accounts
+    let totalCash = 0;
+    const cashByCurrency = [];
+    const cashByAccount = [];
+    
+    for (const account of bankAccounts) {
+        totalCash += account.currentBalance;
+        
+        // Group by currency
+        const existingCurrency = cashByCurrency.find(c => c.currency === account.currency);
+        if (existingCurrency) {
+            existingCurrency.amount += account.currentBalance;
+        } else {
+            cashByCurrency.push({
+                currency: account.currency,
+                amount: account.currentBalance
+            });
+        }
+        
+        // Add to byAccount list
+        cashByAccount.push({
+            bank: account.bankName,
+            account: account.accountName,
+            balance: account.currentBalance,
+            lastReconciled: account.lastReconciledAt
+        });
+    }
+    
+    // Get investments (if any)
+    const investments = [];
+    
+    // Get debt (if any)
+    const debt = [];
+    
     // Update expense breakdown with budget info
     if (budgetData && budgetData.byDepartment) {
         for (const expense of expensesByCategory) {
@@ -767,7 +810,7 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         }
     }
     
-    // Create dashboard
+    // Create dashboard with real treasury data
     const dashboard = new FinancialDashboard({
         organization: organizationId,
         name: `Financial Dashboard - ${period} ${year || ''}`,
@@ -831,15 +874,41 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
             breakEven: { revenue: totalExpenses, units: 0, months: 0, marginOfSafety: totalRevenue > 0 ? (totalRevenue - totalExpenses) / totalRevenue * 100 : 0 }
         },
         ratios: {
-            liquidity: { current: totalAssets > 0 ? 1 : 0, quick: 1, cash: 1 },
-            efficiency: { assetTurnover: totalAssets > 0 ? totalRevenue / totalAssets : 0, inventoryTurnover: 0, receivableTurnover: 0, payableTurnover: 0, cashConversion: 0 },
-            profitability: { roa: totalAssets > 0 ? (netProfit / totalAssets) * 100 : 0, roe: totalAssets > 0 ? (netProfit / totalAssets) * 100 : 0, roi: netMargin, roic: netMargin },
-            leverage: { debtToEquity: 0, debtToAsset: 0, interestCoverage: 0, debtToEbitda: 0 }
+            liquidity: { 
+                current: totalAssets > 0 ? 1 : 0, 
+                quick: 1, 
+                cash: totalCash > 0 ? totalCash / (totalExpenses / 12) : 0 
+            },
+            efficiency: { 
+                assetTurnover: totalAssets > 0 ? totalRevenue / totalAssets : 0, 
+                inventoryTurnover: 0, 
+                receivableTurnover: 0, 
+                payableTurnover: 0, 
+                cashConversion: 0 
+            },
+            profitability: { 
+                roa: totalAssets > 0 ? (netProfit / totalAssets) * 100 : 0, 
+                roe: totalAssets > 0 ? (netProfit / totalAssets) * 100 : 0, 
+                roi: netMargin, 
+                roic: netMargin 
+            },
+            leverage: { 
+                debtToEquity: 0, 
+                debtToAsset: 0, 
+                interestCoverage: 0, 
+                debtToEbitda: 0 
+            }
         },
         treasury: {
-            cash: { onHand: totalAssets, inBank: totalAssets, total: totalAssets, byCurrency: [{ currency: 'KES', amount: totalAssets }], byAccount: [] },
-            investments: [],
-            debt: [],
+            cash: { 
+                onHand: totalCash, 
+                inBank: totalCash, 
+                total: totalCash, 
+                byCurrency: cashByCurrency,
+                byAccount: cashByAccount
+            },
+            investments: investments,
+            debt: debt,
             forecast: { inflow: [], outflow: [], netPosition: [] }
         },
         tax: {
@@ -863,7 +932,7 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         createdBy: memberId
     });
     
-    // Add alerts
+    // Add alerts based on real data
     if (netMargin < 15) {
         dashboard.alerts.push({
             type: 'profitability',
@@ -885,6 +954,20 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
             metric: 'netProfit',
             value: netProfit,
             threshold: 0,
+            timestamp: new Date(),
+            resolved: false
+        });
+    }
+    
+    // Add cash alert if cash is low
+    if (totalCash < totalExpenses) {
+        dashboard.alerts.push({
+            type: 'liquidity',
+            severity: 'critical',
+            message: `Cash balance (${totalCash}) is less than monthly expenses (${totalExpenses})`,
+            metric: 'cashCoverage',
+            value: totalCash / totalExpenses,
+            threshold: 1,
             timestamp: new Date(),
             resolved: false
         });
