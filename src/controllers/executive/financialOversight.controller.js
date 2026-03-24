@@ -1316,120 +1316,142 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
  * Get budget data from finance budget model for executive dashboard
  */
 async function getBudgetDataForExecutive(organizationId, fiscalYear) {
-    // Get active budget from finance module
-    const financeBudget = await FinanceBudget.findOne({
-        organization: organizationId,
-        fiscalYear: fiscalYear,
-        status: 'active'
-    }).populate('lineItems.account');
-    
-    if (!financeBudget) {
+    try {
+        console.log(`Looking for budget for fiscal year ${fiscalYear}`);
+        
+        // Get active budget from finance module - include both active and approved
+        const financeBudget = await FinanceBudget.findOne({
+            organization: organizationId,
+            fiscalYear: fiscalYear,
+            status: { $in: ['active', 'approved'] }
+        }).populate('lineItems.account');
+        
+        if (!financeBudget) {
+            console.log(`No active/approved budget found for fiscal year ${fiscalYear}`);
+            return null;
+        }
+        
+        console.log(`Found budget: ${financeBudget.budgetNumber}, status: ${financeBudget.status}`);
+        console.log(`Line items: ${financeBudget.lineItems.length}`);
+        
+        // Format budget data for executive dashboard
+        const budgetData = {
+            current: {
+                revenue: 0,
+                expenses: 0,
+                profit: 0,
+                capex: 0
+            },
+            actual: {
+                revenue: 0,
+                expenses: 0,
+                profit: 0,
+                capex: 0
+            },
+            variance: {
+                revenue: { value: 0, percentage: 0, reasons: [] },
+                expenses: { value: 0, percentage: 0, reasons: [] },
+                profit: { value: 0, percentage: 0, reasons: [] }
+            },
+            byDepartment: [],
+            byProject: [],
+            forecast: {
+                revenue: 0,
+                expenses: 0,
+                profit: 0,
+                confidence: 85
+            }
+        };
+        
+        // Calculate totals from budget line items
+        let totalBudgetRevenue = 0;
+        let totalBudgetExpenses = 0;
+        let totalActualRevenue = 0;
+        let totalActualExpenses = 0;
+        
+        const departmentMap = new Map();
+        
+        for (const item of financeBudget.lineItems) {
+            // Handle account reference
+            let account = item.account;
+            
+            // If account is an ObjectId string, fetch it
+            if (account && typeof account === 'object' && account._id) {
+                // Already populated
+            } else if (account && typeof account === 'string') {
+                account = await Account.findById(account);
+            }
+            
+            if (!account) {
+                console.log(`Skipping item with invalid account reference`);
+                continue;
+            }
+            
+            const amount = item.amount || 0;
+            const actualAmount = item.actualAmount || 0;
+            
+            console.log(`Processing: ${account.name} (${account.type}) - Budget: ${amount}, Actual: ${actualAmount}`);
+            
+            if (account.type === 'revenue') {
+                totalBudgetRevenue += amount;
+                totalActualRevenue += actualAmount;
+            } else if (account.type === 'expense') {
+                totalBudgetExpenses += amount;
+                totalActualExpenses += actualAmount;
+                
+                // Use account name as department for matching with expense categories
+                const department = account.name;
+                if (!departmentMap.has(department)) {
+                    departmentMap.set(department, { budget: 0, actual: 0 });
+                }
+                const dept = departmentMap.get(department);
+                dept.budget += amount;
+                dept.actual += actualAmount;
+            }
+        }
+        
+        budgetData.current.revenue = totalBudgetRevenue;
+        budgetData.current.expenses = totalBudgetExpenses;
+        budgetData.current.profit = totalBudgetRevenue - totalBudgetExpenses;
+        
+        budgetData.actual.revenue = totalActualRevenue;
+        budgetData.actual.expenses = totalActualExpenses;
+        budgetData.actual.profit = totalActualRevenue - totalActualExpenses;
+        
+        // Calculate variances
+        budgetData.variance.revenue.value = totalBudgetRevenue - totalActualRevenue;
+        budgetData.variance.revenue.percentage = totalBudgetRevenue > 0 ? (budgetData.variance.revenue.value / totalBudgetRevenue) * 100 : 0;
+        budgetData.variance.expenses.value = totalBudgetExpenses - totalActualExpenses;
+        budgetData.variance.expenses.percentage = totalBudgetExpenses > 0 ? (budgetData.variance.expenses.value / totalBudgetExpenses) * 100 : 0;
+        budgetData.variance.profit.value = budgetData.current.profit - budgetData.actual.profit;
+        budgetData.variance.profit.percentage = budgetData.current.profit > 0 ? (budgetData.variance.profit.value / budgetData.current.profit) * 100 : 0;
+        
+        // Format by department
+        for (const [deptName, values] of departmentMap) {
+            const variance = values.budget - values.actual;
+            const variancePercent = values.budget > 0 ? (variance / values.budget) * 100 : 0;
+            budgetData.byDepartment.push({
+                department: deptName,
+                budget: values.budget,
+                actual: values.actual,
+                variance: variance,
+                variancePercentage: variancePercent
+            });
+        }
+        
+        // Sort by budget amount descending
+        budgetData.byDepartment.sort((a, b) => b.budget - a.budget);
+        
+        console.log(`Budget data prepared: Revenue Budget: ${totalBudgetRevenue}, Actual Revenue: ${totalActualRevenue}`);
+        console.log(`Expense Budget: ${totalBudgetExpenses}, Actual Expenses: ${totalActualExpenses}`);
+        console.log(`Departments: ${budgetData.byDepartment.length}`);
+        
+        return budgetData;
+        
+    } catch (error) {
+        console.error('Error in getBudgetDataForExecutive:', error);
         return null;
     }
-    
-    // Format budget data for executive dashboard
-    const budgetData = {
-        current: {
-            revenue: 0,
-            expenses: 0,
-            profit: 0,
-            capex: 0
-        },
-        actual: {
-            revenue: 0,
-            expenses: 0,
-            profit: 0,
-            capex: 0
-        },
-        variance: {
-            revenue: { value: 0, percentage: 0, reasons: [] },
-            expenses: { value: 0, percentage: 0, reasons: [] },
-            profit: { value: 0, percentage: 0, reasons: [] }
-        },
-        byDepartment: [],
-        byProject: [],
-        forecast: {
-            revenue: 0,
-            expenses: 0,
-            profit: 0,
-            confidence: 85
-        }
-    };
-    
-    // Calculate totals from budget line items
-    let totalBudgetRevenue = 0;
-    let totalBudgetExpenses = 0;
-    let totalActualRevenue = 0;
-    let totalActualExpenses = 0;
-    
-    const departmentMap = new Map();
-    
-    for (const item of financeBudget.lineItems) {
-        // Handle both populated and unpopulated account references
-        let account = item.account;
-        if (account && typeof account === 'object' && account._id) {
-            // Already populated
-        } else if (account) {
-            // Need to populate
-            account = await Account.findById(account);
-        }
-        
-        if (!account) continue;
-        
-        const amount = item.amount || 0;
-        const actualAmount = item.actualAmount || 0;
-        
-        if (account.type === 'revenue') {
-            totalBudgetRevenue += amount;
-            totalActualRevenue += actualAmount;
-        } else if (account.type === 'expense') {
-            totalBudgetExpenses += amount;
-            totalActualExpenses += actualAmount;
-            
-            // Map to department (use account category or parent account name)
-            const department = account.category || account.parent?.name || 'Other';
-            if (!departmentMap.has(department)) {
-                departmentMap.set(department, { budget: 0, actual: 0, variance: 0 });
-            }
-            const dept = departmentMap.get(department);
-            dept.budget += amount;
-            dept.actual += actualAmount;
-        }
-    }
-    
-    budgetData.current.revenue = totalBudgetRevenue;
-    budgetData.current.expenses = totalBudgetExpenses;
-    budgetData.current.profit = totalBudgetRevenue - totalBudgetExpenses;
-    
-    budgetData.actual.revenue = totalActualRevenue;
-    budgetData.actual.expenses = totalActualExpenses;
-    budgetData.actual.profit = totalActualRevenue - totalActualExpenses;
-    
-    // Calculate variances
-    budgetData.variance.revenue.value = totalBudgetRevenue - totalActualRevenue;
-    budgetData.variance.revenue.percentage = totalBudgetRevenue > 0 ? (budgetData.variance.revenue.value / totalBudgetRevenue) * 100 : 0;
-    budgetData.variance.expenses.value = totalBudgetExpenses - totalActualExpenses;
-    budgetData.variance.expenses.percentage = totalBudgetExpenses > 0 ? (budgetData.variance.expenses.value / totalBudgetExpenses) * 100 : 0;
-    budgetData.variance.profit.value = budgetData.current.profit - budgetData.actual.profit;
-    budgetData.variance.profit.percentage = budgetData.current.profit > 0 ? (budgetData.variance.profit.value / budgetData.current.profit) * 100 : 0;
-    
-    // Format by department with variance percentage
-    for (const [deptName, values] of departmentMap) {
-        const variance = values.budget - values.actual;
-        const variancePercent = values.budget > 0 ? (variance / values.budget) * 100 : 0;
-        budgetData.byDepartment.push({
-            department: deptName,
-            budget: values.budget,
-            actual: values.actual,
-            variance: variance,
-            variancePercentage: variancePercent
-        });
-    }
-    
-    // Sort by budget amount descending
-    budgetData.byDepartment.sort((a, b) => b.budget - a.budget);
-    
-    return budgetData;
 }
 
 async function generateFinancialHealth(organizationId, year, quarter, memberId) {
