@@ -1,0 +1,293 @@
+const mongoose = require('mongoose');
+
+const strategicDashboardSchema = new mongoose.Schema({
+    organization: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Organization',
+        required: true,
+        index: true
+    },
+    
+    // Dashboard configuration
+    name: {
+        type: String,
+        required: true
+    },
+    description: String,
+    type: {
+        type: String,
+        enum: ['board', 'executive', 'custom'],
+        default: 'board'
+    },
+    
+    // Link to strategic plan
+    strategicPlan: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'StrategicPlan'
+    },
+    
+    // Dashboard mode
+    mode: {
+        type: String,
+        enum: ['live', 'manual'],
+        default: 'live'
+    },
+    
+    // KPI Categories with data source configuration
+    categories: [{
+        name: String,
+        order: Number,
+        kpis: [{
+            name: String,
+            key: String,
+            
+            // Data source configuration
+            dataSource: {
+                type: {
+                    type: String,
+                    enum: ['strategic_objective', 'strategic_initiative', 'okr', 'financial', 'manual', 'aggregate'],
+                    default: 'manual'
+                },
+                sourceId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    refPath: 'categories.kpis.dataSource.model'
+                },
+                model: {
+                    type: String,
+                    enum: ['StrategicObjective', 'StrategicInitiative', 'StrategicPlan']
+                },
+                field: String,
+                aggregation: {
+                    type: String,
+                    enum: ['sum', 'avg', 'count', 'min', 'max']
+                },
+                filters: mongoose.Schema.Types.Mixed
+            },
+            
+            // Current values
+            value: mongoose.Schema.Types.Mixed,
+            target: mongoose.Schema.Types.Mixed,
+            status: {
+                type: String,
+                enum: ['on_track', 'at_risk', 'behind', 'completed'],
+                default: 'on_track'
+            },
+            trend: {
+                direction: {
+                    type: String,
+                    enum: ['up', 'down', 'stable']
+                },
+                percentage: Number
+            },
+            
+            // Display configuration
+            unit: String,
+            lastUpdated: Date,
+            
+            // History for trends
+            history: [{
+                date: Date,
+                value: mongoose.Schema.Types.Mixed
+            }]
+        }]
+    }],
+    
+    // Visual settings
+    settings: {
+        theme: String,
+        refreshInterval: Number,
+        defaultView: String,
+        favorite: Boolean
+    },
+    
+    // Sharing settings
+    sharing: {
+        isPublic: Boolean,
+        sharedWith: [{
+            user: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'OrganizationMember'
+            },
+            permissions: String
+        }],
+        shareLink: String
+    },
+    
+    // Metadata
+    createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'OrganizationMember',
+        required: true
+    },
+    updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'OrganizationMember'
+    },
+    lastViewed: Date,
+    viewCount: {
+        type: Number,
+        default: 0
+    },
+    isActive: {
+        type: Boolean,
+        default: true
+    }
+}, {
+    timestamps: true
+});
+
+// Indexes for performance
+strategicDashboardSchema.index({ organization: 1, type: 1, mode: 1 });
+strategicDashboardSchema.index({ strategicPlan: 1 });
+strategicDashboardSchema.index({ 'categories.kpis.dataSource.sourceId': 1 });
+
+// ============= METHODS =============
+
+/**
+ * Helper: Aggregate values from array
+ */
+strategicDashboardSchema.methods.aggregateValues = function(items, field, aggregation, filters = {}) {
+    if (!items || items.length === 0) return 0;
+    
+    let filteredItems = items;
+    if (filters && Object.keys(filters).length > 0) {
+        filteredItems = items.filter(item => {
+            return Object.entries(filters).every(([key, value]) => {
+                // Handle nested paths with dots
+                const keys = key.split('.');
+                let itemValue = item;
+                for (const k of keys) {
+                    if (itemValue === null || itemValue === undefined) {
+                        itemValue = undefined;
+                        break;
+                    }
+                    itemValue = itemValue[k];
+                }
+                
+                if (value && typeof value === 'object' && value.$in) {
+                    return value.$in.includes(itemValue);
+                }
+                return itemValue === value;
+            });
+        });
+    }
+    
+    // Extract values using the field path
+    const values = filteredItems
+        .map(item => {
+            // Handle nested paths with dots
+            const fieldKeys = field.split('.');
+            let value = item;
+            for (const key of fieldKeys) {
+                if (value === null || value === undefined) {
+                    return undefined;
+                }
+                value = value[key];
+            }
+            return value;
+        })
+        .filter(v => v !== null && v !== undefined);
+    
+    if (values.length === 0) return 0;
+    
+    switch (aggregation) {
+        case 'sum':
+            return values.reduce((sum, v) => sum + v, 0);
+        case 'avg':
+            return values.reduce((sum, v) => sum + v, 0) / values.length;
+        case 'count':
+            return values.length;
+        case 'min':
+            return Math.min(...values);
+        case 'max':
+            return Math.max(...values);
+        default:
+            return values[0];
+    }
+};
+                return itemValue === value;
+            });
+        });
+    }
+    
+    const values = filteredItems
+        .map(item => this.getValueFromPath(item, field))
+        .filter(v => v !== null && v !== undefined);
+    
+    if (values.length === 0) return 0;
+    
+    switch (aggregation) {
+        case 'sum':
+            return values.reduce((sum, v) => sum + v, 0);
+        case 'avg':
+            return values.reduce((sum, v) => sum + v, 0) / values.length;
+        case 'count':
+            return values.length;
+        case 'min':
+            return Math.min(...values);
+        case 'max':
+            return Math.max(...values);
+        default:
+            return values[0];
+    }
+};
+
+/**
+ * Increment view count
+ */
+strategicDashboardSchema.methods.incrementViewCount = function() {
+    this.viewCount += 1;
+    this.lastViewed = new Date();
+    return this.save();
+};
+
+// ============= STATICS =============
+
+/**
+ * Get dashboard with optional refresh
+ */
+strategicDashboardSchema.statics.getDashboardWithRefresh = async function(dashboardId, forceRefresh = false) {
+    const dashboard = await this.findById(dashboardId);
+    if (!dashboard) return null;
+    
+    if (forceRefresh && dashboard.mode === 'live') {
+        await dashboard.refreshFromPlanning();
+    }
+    
+    return dashboard;
+};
+
+/**
+ * Get dashboard data formatted for API response
+ */
+strategicDashboardSchema.statics.getFormattedDashboard = async function(dashboardId, options = {}) {
+    const dashboard = await this.getDashboardWithRefresh(dashboardId, options.forceRefresh);
+    if (!dashboard) return null;
+    
+    return {
+        id: dashboard._id,
+        name: dashboard.name,
+        description: dashboard.description,
+        type: dashboard.type,
+        mode: dashboard.mode,
+        categories: dashboard.categories.map(category => ({
+            name: category.name,
+            order: category.order,
+            kpis: category.kpis.map(kpi => ({
+                name: kpi.name,
+                key: kpi.key,
+                value: kpi.value,
+                target: kpi.target,
+                unit: kpi.unit,
+                status: kpi.status,
+                trend: kpi.trend,
+                lastUpdated: kpi.lastUpdated,
+                history: kpi.history.slice(-6)
+            }))
+        })),
+        settings: dashboard.settings,
+        lastRefreshed: dashboard.updatedAt
+    };
+};
+
+module.exports = mongoose.model('StrategicDashboard', strategicDashboardSchema);
