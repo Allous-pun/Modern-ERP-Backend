@@ -1315,7 +1315,7 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
 /**
  * Get budget data from finance budget model for executive dashboard
  */
-async function getBudgetDataForExecutive(organizationId, fiscalYear) {
+async function getBudgetDataForExecutive(organizationId, fiscalYear, period = null, dateRange = null) {
     try {
         console.log(`Looking for budget for fiscal year ${fiscalYear}`);
         
@@ -1355,12 +1355,15 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
             },
             byDepartment: [],
             byProject: [],
+            byCategory: [],
             forecast: {
                 revenue: 0,
                 expenses: 0,
                 profit: 0,
                 confidence: 85
-            }
+            },
+            monthlyBreakdown: [],
+            quarterlyBreakdown: []
         };
         
         // Calculate totals from budget line items
@@ -1370,6 +1373,21 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
         let totalActualExpenses = 0;
         
         const departmentMap = new Map();
+        const categoryMap = new Map();
+        const monthlyDataMap = new Map(); // Store monthly data by month
+        const quarterlyDataMap = new Map(); // Store quarterly data by quarter
+        
+        // Helper to get month number from date
+        const getMonthNumber = (date) => {
+            if (!date) return null;
+            const d = new Date(date);
+            return d.getMonth() + 1;
+        };
+        
+        // Helper to get quarter from month
+        const getQuarter = (month) => {
+            return Math.ceil(month / 3);
+        };
         
         for (const item of financeBudget.lineItems) {
             // Handle account reference
@@ -1390,14 +1408,51 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
             const amount = item.amount || 0;
             const actualAmount = item.actualAmount || 0;
             
-            console.log(`Processing: ${account.name} (${account.type}) - Budget: ${amount}, Actual: ${actualAmount}`);
+            // Check if we need to filter by period
+            let shouldInclude = true;
+            let periodActualAmount = actualAmount;
+            
+            if (period && dateRange && item.monthlyBreakdown) {
+                // Filter actual amounts based on period
+                if (period === 'monthly' && dateRange.start && dateRange.end) {
+                    periodActualAmount = 0;
+                    // Sum only the amounts for the specified month range
+                    for (const monthly of item.monthlyBreakdown || []) {
+                        const monthlyDate = new Date(monthly.month);
+                        if (monthlyDate >= dateRange.start && monthlyDate <= dateRange.end) {
+                            periodActualAmount += monthly.actualAmount || 0;
+                        }
+                    }
+                } else if (period === 'quarterly' && dateRange.start && dateRange.end) {
+                    periodActualAmount = 0;
+                    // Sum only the amounts for the specified quarter
+                    for (const monthly of item.monthlyBreakdown || []) {
+                        const monthlyDate = new Date(monthly.month);
+                        if (monthlyDate >= dateRange.start && monthlyDate <= dateRange.end) {
+                            periodActualAmount += monthly.actualAmount || 0;
+                        }
+                    }
+                }
+            }
+            
+            console.log(`Processing: ${account.name} (${account.type}) - Budget: ${amount}, Actual: ${periodActualAmount}`);
             
             if (account.type === 'revenue') {
                 totalBudgetRevenue += amount;
-                totalActualRevenue += actualAmount;
+                totalActualRevenue += periodActualAmount;
+                
+                // Collect revenue by category/stream
+                const category = account.category || account.name;
+                if (!categoryMap.has(category)) {
+                    categoryMap.set(category, { budget: 0, actual: 0 });
+                }
+                const cat = categoryMap.get(category);
+                cat.budget += amount;
+                cat.actual += periodActualAmount;
+                
             } else if (account.type === 'expense') {
                 totalBudgetExpenses += amount;
-                totalActualExpenses += actualAmount;
+                totalActualExpenses += periodActualAmount;
                 
                 // Use account name as department for matching with expense categories
                 const department = account.name;
@@ -1406,7 +1461,68 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
                 }
                 const dept = departmentMap.get(department);
                 dept.budget += amount;
-                dept.actual += actualAmount;
+                dept.actual += periodActualAmount;
+                
+                // Also track by category
+                const category = account.category || 'Other';
+                if (!categoryMap.has(category)) {
+                    categoryMap.set(category, { budget: 0, actual: 0 });
+                }
+                const cat = categoryMap.get(category);
+                cat.budget += amount;
+                cat.actual += periodActualAmount;
+            }
+            
+            // Process monthly breakdown if available
+            if (item.monthlyBreakdown && item.monthlyBreakdown.length > 0) {
+                for (const monthly of item.monthlyBreakdown) {
+                    const monthNum = getMonthNumber(monthly.month);
+                    if (monthNum) {
+                        const monthKey = `Month ${monthNum}`;
+                        if (!monthlyDataMap.has(monthKey)) {
+                            monthlyDataMap.set(monthKey, { 
+                                month: monthNum,
+                                budget: 0, 
+                                actual: 0,
+                                revenue: 0,
+                                expenses: 0
+                            });
+                        }
+                        const monthData = monthlyDataMap.get(monthKey);
+                        if (account.type === 'revenue') {
+                            monthData.revenue += monthly.amount || 0;
+                            monthData.budget += monthly.amount || 0;
+                            monthData.actual += monthly.actualAmount || 0;
+                        } else if (account.type === 'expense') {
+                            monthData.expenses += monthly.amount || 0;
+                            monthData.budget += monthly.amount || 0;
+                            monthData.actual += monthly.actualAmount || 0;
+                        }
+                    }
+                    
+                    // Also track quarterly data
+                    const quarterNum = getQuarter(monthNum);
+                    const quarterKey = `Q${quarterNum}`;
+                    if (!quarterlyDataMap.has(quarterKey)) {
+                        quarterlyDataMap.set(quarterKey, { 
+                            quarter: quarterNum,
+                            budget: 0, 
+                            actual: 0,
+                            revenue: 0,
+                            expenses: 0
+                        });
+                    }
+                    const quarterData = quarterlyDataMap.get(quarterKey);
+                    if (account.type === 'revenue') {
+                        quarterData.revenue += monthly.amount || 0;
+                        quarterData.budget += monthly.amount || 0;
+                        quarterData.actual += monthly.actualAmount || 0;
+                    } else if (account.type === 'expense') {
+                        quarterData.expenses += monthly.amount || 0;
+                        quarterData.budget += monthly.amount || 0;
+                        quarterData.actual += monthly.actualAmount || 0;
+                    }
+                }
             }
         }
         
@@ -1418,13 +1534,39 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
         budgetData.actual.expenses = totalActualExpenses;
         budgetData.actual.profit = totalActualRevenue - totalActualExpenses;
         
-        // Calculate variances
-        budgetData.variance.revenue.value = totalBudgetRevenue - totalActualRevenue;
-        budgetData.variance.revenue.percentage = totalBudgetRevenue > 0 ? (budgetData.variance.revenue.value / totalBudgetRevenue) * 100 : 0;
-        budgetData.variance.expenses.value = totalBudgetExpenses - totalActualExpenses;
-        budgetData.variance.expenses.percentage = totalBudgetExpenses > 0 ? (budgetData.variance.expenses.value / totalBudgetExpenses) * 100 : 0;
-        budgetData.variance.profit.value = budgetData.current.profit - budgetData.actual.profit;
-        budgetData.variance.profit.percentage = budgetData.current.profit > 0 ? (budgetData.variance.profit.value / budgetData.current.profit) * 100 : 0;
+        // Calculate variances with reasons
+        const revenueVarianceValue = totalBudgetRevenue - totalActualRevenue;
+        const revenueVariancePercent = totalBudgetRevenue > 0 ? (revenueVarianceValue / totalBudgetRevenue) * 100 : 0;
+        
+        const expenseVarianceValue = totalBudgetExpenses - totalActualExpenses;
+        const expenseVariancePercent = totalBudgetExpenses > 0 ? (expenseVarianceValue / totalBudgetExpenses) * 100 : 0;
+        
+        const profitVarianceValue = budgetData.current.profit - budgetData.actual.profit;
+        const profitVariancePercent = budgetData.current.profit > 0 ? (profitVarianceValue / budgetData.current.profit) * 100 : 0;
+        
+        budgetData.variance.revenue.value = revenueVarianceValue;
+        budgetData.variance.revenue.percentage = revenueVariancePercent;
+        budgetData.variance.expenses.value = expenseVarianceValue;
+        budgetData.variance.expenses.percentage = expenseVariancePercent;
+        budgetData.variance.profit.value = profitVarianceValue;
+        budgetData.variance.profit.percentage = profitVariancePercent;
+        
+        // Add variance reasons based on significant deviations
+        if (Math.abs(revenueVariancePercent) > 10) {
+            budgetData.variance.revenue.reasons.push(
+                revenueVariancePercent > 0 
+                    ? 'Revenue exceeded budget by more than 10% due to higher than expected sales volume'
+                    : 'Revenue below budget by more than 10% due to lower than expected sales volume'
+            );
+        }
+        
+        if (Math.abs(expenseVariancePercent) > 10) {
+            budgetData.variance.expenses.reasons.push(
+                expenseVariancePercent > 0 
+                    ? 'Expenses were under budget by more than 10% due to cost savings initiatives'
+                    : 'Expenses exceeded budget by more than 10% due to unexpected costs'
+            );
+        }
         
         // Format by department
         for (const [deptName, values] of departmentMap) {
@@ -1435,16 +1577,85 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
                 budget: values.budget,
                 actual: values.actual,
                 variance: variance,
+                variancePercentage: variancePercent,
+                status: Math.abs(variancePercent) > 20 ? 'critical' : Math.abs(variancePercent) > 10 ? 'warning' : 'good'
+            });
+        }
+        
+        // Format by category
+        for (const [categoryName, values] of categoryMap) {
+            const variance = values.budget - values.actual;
+            const variancePercent = values.budget > 0 ? (variance / values.budget) * 100 : 0;
+            budgetData.byCategory.push({
+                category: categoryName,
+                budget: values.budget,
+                actual: values.actual,
+                variance: variance,
+                variancePercentage: variancePercent
+            });
+        }
+        
+        // Format monthly breakdown
+        const sortedMonths = Array.from(monthlyDataMap.values()).sort((a, b) => a.month - b.month);
+        for (const month of sortedMonths) {
+            const profit = month.revenue - month.expenses;
+            const variance = month.budget - month.actual;
+            const variancePercent = month.budget > 0 ? (variance / month.budget) * 100 : 0;
+            budgetData.monthlyBreakdown.push({
+                month: month.month,
+                budget: month.budget,
+                actual: month.actual,
+                revenue: month.revenue,
+                expenses: month.expenses,
+                profit: profit,
+                variance: variance,
+                variancePercentage: variancePercent
+            });
+        }
+        
+        // Format quarterly breakdown
+        const sortedQuarters = Array.from(quarterlyDataMap.values()).sort((a, b) => a.quarter - b.quarter);
+        for (const quarter of sortedQuarters) {
+            const profit = quarter.revenue - quarter.expenses;
+            const variance = quarter.budget - quarter.actual;
+            const variancePercent = quarter.budget > 0 ? (variance / quarter.budget) * 100 : 0;
+            budgetData.quarterlyBreakdown.push({
+                quarter: quarter.quarter,
+                budget: quarter.budget,
+                actual: quarter.actual,
+                revenue: quarter.revenue,
+                expenses: quarter.expenses,
+                profit: profit,
+                variance: variance,
                 variancePercentage: variancePercent
             });
         }
         
         // Sort by budget amount descending
         budgetData.byDepartment.sort((a, b) => b.budget - a.budget);
+        budgetData.byCategory.sort((a, b) => b.budget - a.budget);
+        
+        // Calculate forecast based on trends
+        if (budgetData.monthlyBreakdown.length >= 3) {
+            const lastThreeMonths = budgetData.monthlyBreakdown.slice(-3);
+            const avgGrowth = lastThreeMonths.reduce((sum, m, idx) => {
+                if (idx === 0) return 0;
+                const prev = lastThreeMonths[idx - 1];
+                const growth = prev.profit > 0 ? ((m.profit - prev.profit) / prev.profit) * 100 : 0;
+                return sum + growth;
+            }, 0) / (lastThreeMonths.length - 1);
+            
+            budgetData.forecast.revenue = budgetData.actual.revenue * (1 + (avgGrowth / 100));
+            budgetData.forecast.expenses = budgetData.actual.expenses * (1 + (avgGrowth / 100) * 0.5);
+            budgetData.forecast.profit = budgetData.forecast.revenue - budgetData.forecast.expenses;
+            budgetData.forecast.confidence = Math.max(70, 95 - (budgetData.monthlyBreakdown.length * 2));
+        }
         
         console.log(`Budget data prepared: Revenue Budget: ${totalBudgetRevenue}, Actual Revenue: ${totalActualRevenue}`);
         console.log(`Expense Budget: ${totalBudgetExpenses}, Actual Expenses: ${totalActualExpenses}`);
         console.log(`Departments: ${budgetData.byDepartment.length}`);
+        console.log(`Categories: ${budgetData.byCategory.length}`);
+        console.log(`Monthly breakdown: ${budgetData.monthlyBreakdown.length}`);
         
         return budgetData;
         
