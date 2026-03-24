@@ -1010,6 +1010,14 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         deletedAt: null
     });
     
+    // Get liability accounts for balance sheet
+    const liabilityAccounts = await Account.find({
+        organization: organizationId,
+        type: 'liability',
+        isActive: true,
+        deletedAt: null
+    });
+    
     // Calculate revenue total
     let totalRevenue = 0;
     const revenueByStream = [];
@@ -1071,26 +1079,6 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         item.percentage = totalExpenses > 0 ? (item.value / totalExpenses) * 100 : 0;
     });
     
-    // Get budget for comparison
-    const budget = await FinanceBudget.findOne({
-        organization: organizationId,
-        fiscalYear: year || new Date().getFullYear(),
-        status: 'active'
-    });
-    
-    // Update budget variances
-    if (budget) {
-        for (const expense of expensesByCategory) {
-            const budgetItem = budget.lineItems.find(
-                item => item.account && item.account.name === expense.category
-            );
-            if (budgetItem) {
-                expense.budget = budgetItem.amount;
-                expense.variance = budgetItem.amount - expense.value;
-            }
-        }
-    }
-    
     // Calculate asset total
     let totalAssets = 0;
     for (const account of assetAccounts) {
@@ -1105,9 +1093,43 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         totalAssets += balance;
     }
     
+    // Calculate liability total
+    let totalLiabilities = 0;
+    for (const account of liabilityAccounts) {
+        let balance = 0;
+        for (const entry of journalEntries) {
+            for (const line of entry.entries) {
+                if (line.account.toString() === account._id.toString()) {
+                    balance += (line.credit || 0) - (line.debit || 0);
+                }
+            }
+        }
+        totalLiabilities += balance;
+    }
+    
+    // Calculate equity
+    const totalEquity = totalAssets - totalLiabilities;
+    
     // Net profit
     const netProfit = totalRevenue - totalExpenses;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+    
+    // Get budget data from finance module
+    const budgetData = await getBudgetDataForExecutive(organizationId, year || new Date().getFullYear());
+    
+    // Update expense breakdown with budget info if available
+    if (budgetData && budgetData.byDepartment) {
+        for (const expense of expensesByCategory) {
+            // Try to match by department name (case-insensitive)
+            const budgetItem = budgetData.byDepartment.find(d => 
+                d.department.toLowerCase() === expense.category.toLowerCase()
+            );
+            if (budgetItem) {
+                expense.budget = budgetItem.budget;
+                expense.variance = budgetItem.variance;
+            }
+        }
+    }
     
     // Create dashboard with real data
     const dashboard = new FinancialDashboard({
@@ -1146,10 +1168,10 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
             },
             balanceSheet: {
                 assets: { total: totalAssets, current: totalAssets, fixed: 0, intangible: 0 },
-                liabilities: { total: 0, current: 0, longTerm: 0 },
-                equity: { total: totalAssets, retained: netProfit, paid: totalAssets - netProfit },
-                workingCapital: totalAssets,
-                debtToEquity: 0
+                liabilities: { total: totalLiabilities, current: totalLiabilities, longTerm: 0 },
+                equity: { total: totalEquity, retained: netProfit, paid: totalEquity - netProfit },
+                workingCapital: totalAssets - totalLiabilities,
+                debtToEquity: totalEquity > 0 ? totalLiabilities / totalEquity : 0
             }
         },
         revenue: {
@@ -1182,13 +1204,44 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
             breakEven: { revenue: totalExpenses, units: 0, months: 0, marginOfSafety: totalRevenue > 0 ? (totalRevenue - totalExpenses) / totalRevenue * 100 : 0 }
         },
         ratios: {
-            liquidity: { current: totalAssets > 0 ? 1 : 0, quick: 1, cash: 1 },
-            efficiency: { assetTurnover: totalAssets > 0 ? totalRevenue / totalAssets : 0, inventoryTurnover: 0, receivableTurnover: 0, payableTurnover: 0, cashConversion: 0 },
-            profitability: { roa: totalAssets > 0 ? (netProfit / totalAssets) * 100 : 0, roe: totalAssets > 0 ? (netProfit / totalAssets) * 100 : 0, roi: netMargin, roic: netMargin },
-            leverage: { debtToEquity: 0, debtToAsset: 0, interestCoverage: 0, debtToEbitda: 0 }
+            liquidity: { 
+                current: totalLiabilities > 0 ? totalAssets / totalLiabilities : totalAssets > 0 ? 1 : 0, 
+                quick: totalLiabilities > 0 ? (totalAssets - 0) / totalLiabilities : totalAssets > 0 ? 1 : 0, 
+                cash: totalLiabilities > 0 ? totalAssets / totalLiabilities : totalAssets > 0 ? 1 : 0 
+            },
+            efficiency: { 
+                assetTurnover: totalAssets > 0 ? totalRevenue / totalAssets : 0, 
+                inventoryTurnover: 0, 
+                receivableTurnover: 0, 
+                payableTurnover: 0, 
+                cashConversion: 0 
+            },
+            profitability: { 
+                roa: totalAssets > 0 ? (netProfit / totalAssets) * 100 : 0, 
+                roe: totalEquity > 0 ? (netProfit / totalEquity) * 100 : 0, 
+                roi: netMargin, 
+                roic: netMargin 
+            },
+            leverage: { 
+                debtToEquity: totalEquity > 0 ? totalLiabilities / totalEquity : 0, 
+                debtToAsset: totalAssets > 0 ? totalLiabilities / totalAssets : 0, 
+                interestCoverage: 0, 
+                debtToEbitda: 0 
+            }
         },
         treasury: {
-            cash: { onHand: totalAssets, inBank: totalAssets, total: totalAssets, byCurrency: [], byAccount: [] },
+            cash: { 
+                onHand: totalAssets, 
+                inBank: totalAssets, 
+                total: totalAssets, 
+                byCurrency: [{ currency: 'KES', amount: totalAssets }], 
+                byAccount: [{
+                    bank: 'Cash',
+                    account: 'Cash on Hand',
+                    balance: totalAssets,
+                    lastReconciled: new Date()
+                }]
+            },
             investments: [],
             debt: [],
             forecast: { inflow: [], outflow: [], netPosition: [] }
@@ -1198,6 +1251,19 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
             vat: { collected: 0, paid: 0, net: 0, returnDate: null },
             payroll: { withheld: 0, paid: 0, nextDue: null },
             compliance: { lastFiling: null, nextFiling: null, status: 'compliant' }
+        },
+        // Add budget data to dashboard
+        budget: budgetData || {
+            current: { revenue: 0, expenses: 0, profit: 0, capex: 0 },
+            actual: { revenue: 0, expenses: 0, profit: 0, capex: 0 },
+            variance: {
+                revenue: { value: 0, percentage: 0, reasons: [] },
+                expenses: { value: 0, percentage: 0, reasons: [] },
+                profit: { value: 0, percentage: 0, reasons: [] }
+            },
+            byDepartment: [],
+            byProject: [],
+            forecast: { revenue: 0, expenses: 0, profit: 0, confidence: 85 }
         },
         createdBy: memberId
     });
@@ -1229,8 +1295,141 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         });
     }
     
+    if (totalLiabilities > totalAssets * 0.7) {
+        dashboard.alerts.push({
+            type: 'leverage',
+            severity: 'warning',
+            message: `Debt to asset ratio is ${((totalLiabilities / totalAssets) * 100).toFixed(1)}%, above threshold of 70%`,
+            metric: 'debtToAsset',
+            value: totalLiabilities / totalAssets,
+            threshold: 0.7,
+            timestamp: new Date(),
+            resolved: false
+        });
+    }
+    
     await dashboard.save();
     return dashboard;
+}
+
+/**
+ * Get budget data from finance budget model for executive dashboard
+ */
+async function getBudgetDataForExecutive(organizationId, fiscalYear) {
+    // Get active budget from finance module
+    const financeBudget = await FinanceBudget.findOne({
+        organization: organizationId,
+        fiscalYear: fiscalYear,
+        status: 'active'
+    }).populate('lineItems.account');
+    
+    if (!financeBudget) {
+        return null;
+    }
+    
+    // Format budget data for executive dashboard
+    const budgetData = {
+        current: {
+            revenue: 0,
+            expenses: 0,
+            profit: 0,
+            capex: 0
+        },
+        actual: {
+            revenue: 0,
+            expenses: 0,
+            profit: 0,
+            capex: 0
+        },
+        variance: {
+            revenue: { value: 0, percentage: 0, reasons: [] },
+            expenses: { value: 0, percentage: 0, reasons: [] },
+            profit: { value: 0, percentage: 0, reasons: [] }
+        },
+        byDepartment: [],
+        byProject: [],
+        forecast: {
+            revenue: 0,
+            expenses: 0,
+            profit: 0,
+            confidence: 85
+        }
+    };
+    
+    // Calculate totals from budget line items
+    let totalBudgetRevenue = 0;
+    let totalBudgetExpenses = 0;
+    let totalActualRevenue = 0;
+    let totalActualExpenses = 0;
+    
+    const departmentMap = new Map();
+    
+    for (const item of financeBudget.lineItems) {
+        // Handle both populated and unpopulated account references
+        let account = item.account;
+        if (account && typeof account === 'object' && account._id) {
+            // Already populated
+        } else if (account) {
+            // Need to populate
+            account = await Account.findById(account);
+        }
+        
+        if (!account) continue;
+        
+        const amount = item.amount || 0;
+        const actualAmount = item.actualAmount || 0;
+        
+        if (account.type === 'revenue') {
+            totalBudgetRevenue += amount;
+            totalActualRevenue += actualAmount;
+        } else if (account.type === 'expense') {
+            totalBudgetExpenses += amount;
+            totalActualExpenses += actualAmount;
+            
+            // Map to department (use account category or parent account name)
+            const department = account.category || account.parent?.name || 'Other';
+            if (!departmentMap.has(department)) {
+                departmentMap.set(department, { budget: 0, actual: 0, variance: 0 });
+            }
+            const dept = departmentMap.get(department);
+            dept.budget += amount;
+            dept.actual += actualAmount;
+        }
+    }
+    
+    budgetData.current.revenue = totalBudgetRevenue;
+    budgetData.current.expenses = totalBudgetExpenses;
+    budgetData.current.profit = totalBudgetRevenue - totalBudgetExpenses;
+    
+    budgetData.actual.revenue = totalActualRevenue;
+    budgetData.actual.expenses = totalActualExpenses;
+    budgetData.actual.profit = totalActualRevenue - totalActualExpenses;
+    
+    // Calculate variances
+    budgetData.variance.revenue.value = totalBudgetRevenue - totalActualRevenue;
+    budgetData.variance.revenue.percentage = totalBudgetRevenue > 0 ? (budgetData.variance.revenue.value / totalBudgetRevenue) * 100 : 0;
+    budgetData.variance.expenses.value = totalBudgetExpenses - totalActualExpenses;
+    budgetData.variance.expenses.percentage = totalBudgetExpenses > 0 ? (budgetData.variance.expenses.value / totalBudgetExpenses) * 100 : 0;
+    budgetData.variance.profit.value = budgetData.current.profit - budgetData.actual.profit;
+    budgetData.variance.profit.percentage = budgetData.current.profit > 0 ? (budgetData.variance.profit.value / budgetData.current.profit) * 100 : 0;
+    
+    // Format by department with variance percentage
+    for (const [deptName, values] of departmentMap) {
+        const variance = values.budget - values.actual;
+        const variancePercent = values.budget > 0 ? (variance / values.budget) * 100 : 0;
+        budgetData.byDepartment.push({
+            department: deptName,
+            budget: values.budget,
+            actual: values.actual,
+            variance: variance,
+            variancePercentage: variancePercent
+        });
+    }
+    
+    // Sort by budget amount descending
+    budgetData.byDepartment.sort((a, b) => b.budget - a.budget);
+    
+    return budgetData;
 }
 
 async function generateFinancialHealth(organizationId, year, quarter, memberId) {
