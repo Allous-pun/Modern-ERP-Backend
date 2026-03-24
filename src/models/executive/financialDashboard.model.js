@@ -54,7 +54,7 @@ const RiskSchema = new mongoose.Schema({
     mitigation: String
 }, { _id: true });
 
-// NEW: Investment subdocument schema
+// Investment subdocument schema
 const InvestmentSchema = new mongoose.Schema({
     type: {
         type: String,
@@ -79,7 +79,7 @@ const InvestmentSchema = new mongoose.Schema({
     }
 }, { _id: true });
 
-// NEW: Debt subdocument schema
+// Debt subdocument schema
 const DebtSchema = new mongoose.Schema({
     lender: {
         type: String,
@@ -103,13 +103,13 @@ const DebtSchema = new mongoose.Schema({
     }
 }, { _id: true });
 
-// NEW: Cash by currency subdocument
+// Cash by currency subdocument
 const CashCurrencySchema = new mongoose.Schema({
     currency: String,
     amount: Number
 }, { _id: true });
 
-// NEW: Cash by account subdocument
+// Cash by account subdocument
 const CashAccountSchema = new mongoose.Schema({
     bank: String,
     account: String,
@@ -117,7 +117,7 @@ const CashAccountSchema = new mongoose.Schema({
     lastReconciled: Date
 }, { _id: true });
 
-// NEW: Forecast inflow/outflow subdocuments
+// Forecast inflow/outflow subdocuments
 const ForecastInflowSchema = new mongoose.Schema({
     source: String,
     amount: Number,
@@ -135,6 +135,62 @@ const ForecastOutflowSchema = new mongoose.Schema({
 const NetPositionSchema = new mongoose.Schema({
     date: Date,
     amount: Number
+}, { _id: true });
+
+// Budget Department Schema - updated to include variancePercentage and status
+const BudgetDepartmentSchema = new mongoose.Schema({
+    department: String,
+    budget: Number,
+    actual: Number,
+    variance: Number,
+    variancePercentage: Number,
+    status: {
+        type: String,
+        enum: ['good', 'warning', 'critical'],
+        default: 'good'
+    }
+}, { _id: true });
+
+// Budget Category Schema
+const BudgetCategorySchema = new mongoose.Schema({
+    category: String,
+    budget: Number,
+    actual: Number,
+    variance: Number,
+    variancePercentage: Number
+}, { _id: true });
+
+// Budget Monthly Breakdown Schema
+const BudgetMonthlySchema = new mongoose.Schema({
+    month: Number,
+    budget: Number,
+    actual: Number,
+    revenue: Number,
+    expenses: Number,
+    profit: Number,
+    variance: Number,
+    variancePercentage: Number
+}, { _id: true });
+
+// Budget Quarterly Breakdown Schema
+const BudgetQuarterlySchema = new mongoose.Schema({
+    quarter: Number,
+    budget: Number,
+    actual: Number,
+    revenue: Number,
+    expenses: Number,
+    profit: Number,
+    variance: Number,
+    variancePercentage: Number
+}, { _id: true });
+
+// Budget Project Schema
+const BudgetProjectSchema = new mongoose.Schema({
+    project: String,
+    budget: Number,
+    actual: Number,
+    variance: Number,
+    variancePercentage: Number
 }, { _id: true });
 
 const financialDashboardSchema = new mongoose.Schema({
@@ -472,7 +528,7 @@ const financialDashboardSchema = new mongoose.Schema({
         }
     },
     
-    // Budget Management
+    // Budget Management - UPDATED with enhanced structure
     budget: {
         current: {
             revenue: Number,
@@ -503,20 +559,11 @@ const financialDashboardSchema = new mongoose.Schema({
                 reasons: [String]
             }
         },
-        byDepartment: [{
-            department: String,
-            budget: Number,
-            actual: Number,
-            variance: Number,
-            percentage: Number
-        }],
-        byProject: [{
-            project: String,
-            budget: Number,
-            actual: Number,
-            variance: Number,
-            percentage: Number
-        }],
+        byDepartment: [BudgetDepartmentSchema],
+        byCategory: [BudgetCategorySchema],
+        byProject: [BudgetProjectSchema],
+        monthlyBreakdown: [BudgetMonthlySchema],
+        quarterlyBreakdown: [BudgetQuarterlySchema],
         forecast: {
             revenue: Number,
             expenses: Number,
@@ -559,7 +606,7 @@ const financialDashboardSchema = new mongoose.Schema({
         }
     },
     
-    // Treasury Management - FIXED with subdocument schemas
+    // Treasury Management
     treasury: {
         cash: {
             onHand: Number,
@@ -638,4 +685,7 @@ const financialDashboardSchema = new mongoose.Schema({
 financialDashboardSchema.index({ organization: 1, 'period.start': -1, 'period.end': -1 });
 financialDashboardSchema.index({ organization: 1, 'period.fiscalYear': 1, 'period.quarter': 1 });
 
-module.exports = mongoose.model('FinancialDashboard', financialDashboardSchema);
+// Create and export the model
+const FinancialDashboard = mongoose.model('FinancialDashboard', financialDashboardSchema);
+
+module.exports = FinancialDashboard;
