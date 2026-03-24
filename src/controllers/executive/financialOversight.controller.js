@@ -1058,30 +1058,52 @@ async function createBudgetTemplate(organizationId, fiscalYear, memberId) {
 async function checkFinancialAlerts(organizationId, dashboard) {
     const alerts = [];
     
-    if (dashboard.ratios?.liquidity?.current < 1.5) {
+    // Check if alert already exists before adding
+    const existingAlert = (type, metric) => {
+        return dashboard.alerts.some(a => a.type === type && a.metric === metric && !a.resolved);
+    };
+
+    const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+        dashboard.alerts = dashboard.alerts.filter(alert => {
+        if (alert.resolved && new Date(alert.timestamp) < thirtyDaysAgo) {
+            return false;
+        }
+        return true;
+    });
+    
+    // Current ratio alert
+    if (dashboard.ratios?.liquidity?.current < 1.5 && !existingAlert('liquidity', 'currentRatio')) {
         alerts.push({
             type: 'liquidity',
             severity: 'critical',
             message: 'Current ratio below safe level',
             metric: 'currentRatio',
             value: dashboard.ratios.liquidity.current,
-            threshold: 1.5
+            threshold: 1.5,
+            timestamp: new Date(),
+            resolved: false
         });
     }
     
-    if (dashboard.revenue?.trends?.yearOverYear < 5) {
+    // Revenue growth alert
+    if ((dashboard.revenue?.trends?.yearOverYear || 0) < 5 && !existingAlert('growth', 'yoyGrowth')) {
         alerts.push({
             type: 'growth',
             severity: 'warning',
             message: 'Revenue growth below target',
             metric: 'yoyGrowth',
-            value: dashboard.revenue.trends.yearOverYear,
-            threshold: 5
+            value: dashboard.revenue.trends.yearOverYear || 0,
+            threshold: 5,
+            timestamp: new Date(),
+            resolved: false
         });
     }
     
+    // Only add new alerts that don't exist
     if (alerts.length > 0) {
-        dashboard.alerts = [...alerts, ...(dashboard.alerts || [])].slice(0, 50);
+        dashboard.alerts = [...dashboard.alerts, ...alerts].slice(0, 50);
         await dashboard.save();
     }
     
