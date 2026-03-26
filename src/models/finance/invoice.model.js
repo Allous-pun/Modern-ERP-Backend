@@ -1,118 +1,43 @@
 // src/models/finance/invoice.model.js
 const mongoose = require('mongoose');
 
-const invoiceItemSchema = new mongoose.Schema({
-    lineNumber: {
-        type: Number,
-        required: true
-    },
+const invoiceLineItemSchema = new mongoose.Schema({
     description: {
         type: String,
-        required: [true, 'Item description is required'],
-        trim: true,
-        maxlength: [500, 'Description cannot exceed 500 characters']
+        required: [true, 'Line item description is required'],
+        trim: true
     },
     quantity: {
         type: Number,
         required: [true, 'Quantity is required'],
-        min: [0, 'Quantity cannot be negative']
+        min: 0,
+        default: 1
     },
     unitPrice: {
         type: Number,
         required: [true, 'Unit price is required'],
-        min: [0, 'Unit price cannot be negative']
-    },
-    discountRate: {
-        type: Number,
-        default: 0,
-        min: [0, 'Discount rate cannot be negative'],
-        max: [100, 'Discount rate cannot exceed 100%']
-    },
-    discountAmount: {
-        type: Number,
-        default: 0,
-        min: [0, 'Discount amount cannot be negative']
-    },
-    taxRate: {
-        type: Number,
-        default: 0,
-        min: [0, 'Tax rate cannot be negative'],
-        max: [100, 'Tax rate cannot exceed 100%']
-    },
-    taxAmount: {
-        type: Number,
-        default: 0,
-        min: [0, 'Tax amount cannot be negative']
+        min: 0
     },
     amount: {
         type: Number,
-        required: true,
-        min: [0, 'Amount cannot be negative']
-    },
-    totalAmount: {
-        type: Number,
-        required: true,
-        min: [0, 'Total amount cannot be negative']
+        default: 0
     },
     account: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Account',
         required: [true, 'Account is required']
     },
-    product: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Product'
-    },
-    productCode: String,
-    productName: String,
-    warehouse: String,
-    location: String,
-    notes: String
-}, { _id: true });
-
-const paymentSchema = new mongoose.Schema({
-    paymentNumber: {
-        type: String,
-        required: true,
-        unique: true
-    },
-    date: {
-        type: Date,
-        required: true,
-        default: Date.now
-    },
-    amount: {
+    taxRate: {
         type: Number,
-        required: true,
-        min: [0, 'Payment amount cannot be negative']
+        default: 0,
+        min: 0,
+        max: 100
     },
-    method: {
-        type: String,
-        required: true,
-        enum: ['cash', 'bank_transfer', 'credit_card', 'debit_card', 'check', 'mobile_money', 'other']
-    },
-    reference: {
-        type: String,
-        trim: true
-    },
-    bankAccount: String,
-    checkNumber: String,
-    cardNumber: String,
-    cardType: String,
-    authorizationCode: String,
-    notes: String,
-    receivedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    },
-    allocatedTo: [{
-        invoiceId: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'Invoice'
-        },
-        amount: Number
-    }]
-}, { _id: true, timestamps: true });
+    taxAmount: {
+        type: Number,
+        default: 0
+    }
+}, { _id: true });
 
 const invoiceSchema = new mongoose.Schema({
     organization: {
@@ -122,153 +47,54 @@ const invoiceSchema = new mongoose.Schema({
         index: true
     },
     
-    // Invoice Identity
     invoiceNumber: {
         type: String,
         required: [true, 'Invoice number is required'],
-        unique: true,
-        trim: true
-    },
-    invoiceType: {
-        type: String,
-        required: [true, 'Invoice type is required'],
-        enum: ['sales', 'purchase', 'credit_note', 'debit_note', 'proforma'],
-        default: 'sales',
-        index: true
-    },
-    invoiceStatus: {
-        type: String,
-        enum: ['draft', 'sent', 'approved', 'rejected', 'paid', 'overdue', 'cancelled', 'void'],
-        default: 'draft',
-        index: true
-    },
-    
-    // Parties
-    customer: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Customer'
-    },
-    vendor: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Vendor'
-    },
-    customerNumber: String,
-    customerName: {
-        type: String,
-        required: [true, 'Customer/vendor name is required'],
-        trim: true
-    },
-    customerEmail: {
-        type: String,
-        lowercase: true,
         trim: true,
-        match: [/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/, 'Invalid email format']
+        unique: true
     },
-    customerPhone: String,
-    customerAddress: {
-        street: String,
-        city: String,
-        state: String,
-        country: String,
-        postalCode: String
+    type: {
+        type: String,
+        enum: ['purchase', 'sales'],
+        required: [true, 'Invoice type is required'],
+        index: true,
+        default: 'purchase'
     },
-    customerTaxId: String,
-    customerRegistrationNumber: String,
-    
-    // Dates
-    issueDate: {
+    date: {
         type: Date,
-        required: [true, 'Issue date is required'],
-        default: Date.now,
-        index: true
+        required: [true, 'Date is required'],
+        default: Date.now
     },
     dueDate: {
         type: Date,
-        required: [true, 'Due date is required'],
-        index: true
-    },
-    deliveryDate: Date,
-    period: {
-        month: Number,
-        year: Number,
-        quarter: Number
+        required: [true, 'Due date is required']
     },
     
-    // Financial
-    currency: {
+    partyId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: [true, 'Party ID is required'],
+        refPath: 'partyModel'
+    },
+    partyModel: {
         type: String,
-        default: 'USD',
-        uppercase: true
+        required: [true, 'Party model is required'],
+        enum: ['OrganizationMember', 'Vendor', 'Customer']
     },
-    exchangeRate: {
-        type: Number,
-        default: 1,
-        min: [0.0001, 'Exchange rate must be positive']
-    },
-    
-    // Items
-    items: [invoiceItemSchema],
-    
-    // Totals
-    subtotal: {
-        type: Number,
-        required: true,
-        default: 0,
-        min: [0, 'Subtotal cannot be negative']
-    },
-    discountTotal: {
-        type: Number,
-        default: 0,
-        min: [0, 'Discount total cannot be negative']
-    },
-    taxTotal: {
-        type: Number,
-        default: 0,
-        min: [0, 'Tax total cannot be negative']
-    },
-    shippingCost: {
-        type: Number,
-        default: 0,
-        min: [0, 'Shipping cost cannot be negative']
-    },
-    shippingTax: {
-        type: Number,
-        default: 0,
-        min: [0, 'Shipping tax cannot be negative']
-    },
-    totalAmount: {
-        type: Number,
-        required: true,
-        min: [0, 'Total amount cannot be negative']
-    },
-    
-    // Payments
-    payments: [paymentSchema],
-    amountPaid: {
-        type: Number,
-        default: 0,
-        min: [0, 'Amount paid cannot be negative']
-    },
-    amountDue: {
-        type: Number,
-        required: true,
-        min: [0, 'Amount due cannot be negative']
-    },
-    paymentStatus: {
+    partyName: {
         type: String,
-        enum: ['unpaid', 'partial', 'paid', 'overpaid'],
-        default: 'unpaid'
+        required: [true, 'Party name is required'],
+        trim: true
     },
-    paymentTerms: {
+    partyEmail: {
+        type: String,
+        trim: true,
+        lowercase: true
+    },
+    partyPhone: {
         type: String,
         trim: true
     },
-    
-    // Shipping
-    shippingMethod: String,
-    shippingTracking: String,
-    shippingDate: Date,
-    shippingAddress: {
+    partyAddress: {
         street: String,
         city: String,
         state: String,
@@ -276,87 +102,80 @@ const invoiceSchema = new mongoose.Schema({
         postalCode: String
     },
     
-    // Notes
+    lineItems: [invoiceLineItemSchema],
+    subtotal: {
+        type: Number,
+        default: 0
+    },
+    taxTotal: {
+        type: Number,
+        default: 0
+    },
+    discount: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    discountType: {
+        type: String,
+        enum: ['percentage', 'fixed'],
+        default: 'fixed'
+    },
+    shipping: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    total: {
+        type: Number,
+        default: 0
+    },
+    
+    status: {
+        type: String,
+        enum: ['draft', 'sent', 'approved', 'partially_paid', 'paid', 'overdue', 'cancelled'],
+        default: 'draft',
+        index: true
+    },
+    paidAmount: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    remainingAmount: {
+        type: Number,
+        default: 0
+    },
+    paidAt: Date,
+    
+    approvedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'OrganizationMember'
+    },
+    approvedAt: Date,
+    
     notes: {
         type: String,
-        trim: true,
-        maxlength: [2000, 'Notes cannot exceed 2000 characters']
+        trim: true
     },
     terms: {
         type: String,
-        trim: true,
-        maxlength: [2000, 'Terms cannot exceed 2000 characters']
-    },
-    internalNotes: {
-        type: String,
-        trim: true,
-        maxlength: [2000, 'Internal notes cannot exceed 2000 characters']
+        trim: true
     },
     
-    // Attachments
-    attachments: [{
-        filename: String,
-        url: String,
-        type: String,
-        size: Number,
-        uploadedAt: Date,
-        uploadedBy: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User'
-        }
-    }],
-    
-    // Approvals
-    approvedBy: {
+    journalEntryId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
+        ref: 'JournalEntry'
     },
-    approvedAt: Date,
-    approvalNotes: String,
     
-    // Rejection
-    rejectedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    },
-    rejectedAt: Date,
-    rejectionReason: String,
-    
-    // Metadata
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
+        ref: 'OrganizationMember',
         required: [true, 'Creator is required']
     },
     updatedBy: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    },
-    
-    // Soft delete
-    isDeleted: {
-        type: Boolean,
-        default: false
-    },
-    deletedAt: Date,
-    deletedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-    },
-    
-    // Recurring
-    isRecurring: {
-        type: Boolean,
-        default: false
-    },
-    recurringFrequency: {
-        type: String,
-        enum: ['daily', 'weekly', 'monthly', 'quarterly', 'annual']
-    },
-    recurringEndDate: Date,
-    recurringParentId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Invoice'
+        ref: 'OrganizationMember'
     }
 }, {
     timestamps: true,
@@ -365,219 +184,133 @@ const invoiceSchema = new mongoose.Schema({
 });
 
 // Indexes
-invoiceSchema.index({ organization: 1, invoiceNumber: 1 });
-invoiceSchema.index({ organization: 1, customer: 1 });
-invoiceSchema.index({ organization: 1, vendor: 1 });
-invoiceSchema.index({ organization: 1, issueDate: 1 });
+invoiceSchema.index({ organization: 1, invoiceNumber: 1 }, { unique: true });
+invoiceSchema.index({ organization: 1, type: 1, status: 1 });
+invoiceSchema.index({ organization: 1, partyId: 1, partyModel: 1 });
 invoiceSchema.index({ organization: 1, dueDate: 1 });
-invoiceSchema.index({ organization: 1, paymentStatus: 1 });
-invoiceSchema.index({ organization: 1, invoiceStatus: 1 });
-invoiceSchema.index({ 'period.year': 1, 'period.month': 1 });
-invoiceSchema.index({ 'period.year': 1, 'period.quarter': 1 });
+invoiceSchema.index({ organization: 1, status: 1, dueDate: 1 });
 
-// Calculate totals before saving
-invoiceSchema.pre('save', function(next) {
-    // Calculate item amounts
-    this.items.forEach((item, index) => {
-        item.lineNumber = index + 1;
+// Pre-save middleware without next
+invoiceSchema.pre('save', function() {
+    let subtotal = 0;
+    let taxTotal = 0;
+    
+    for (const item of this.lineItems) {
         item.amount = item.quantity * item.unitPrice;
-        item.discountAmount = item.amount * (item.discountRate / 100);
-        const amountAfterDiscount = item.amount - item.discountAmount;
-        item.taxAmount = amountAfterDiscount * (item.taxRate / 100);
-        item.totalAmount = amountAfterDiscount + item.taxAmount;
-    });
-    
-    // Calculate invoice totals
-    this.subtotal = this.items.reduce((sum, item) => sum + item.amount, 0);
-    this.discountTotal = this.items.reduce((sum, item) => sum + item.discountAmount, 0);
-    this.taxTotal = this.items.reduce((sum, item) => sum + item.taxAmount, 0) + (this.shippingTax || 0);
-    this.totalAmount = this.subtotal - this.discountTotal + this.taxTotal + (this.shippingCost || 0);
-    
-    // Calculate amount due
-    this.amountDue = this.totalAmount - this.amountPaid;
-    
-    // Update payment status
-    if (this.amountDue <= 0) {
-        this.paymentStatus = Math.abs(this.amountDue) < 0.01 ? 'paid' : 'overpaid';
-    } else if (this.amountPaid > 0) {
-        this.paymentStatus = 'partial';
+        item.taxAmount = item.amount * (item.taxRate / 100);
+        subtotal += item.amount;
+        taxTotal += item.taxAmount;
     }
     
-    // Set period
-    if (this.issueDate) {
-        const date = new Date(this.issueDate);
-        this.period = {
-            month: date.getMonth() + 1,
-            year: date.getFullYear(),
-            quarter: Math.floor(date.getMonth() / 3) + 1
-        };
+    this.subtotal = subtotal;
+    this.taxTotal = taxTotal;
+    
+    let total = subtotal + taxTotal + (this.shipping || 0);
+    
+    if (this.discount > 0) {
+        if (this.discountType === 'percentage') {
+            total = total * (1 - this.discount / 100);
+        } else {
+            total = total - this.discount;
+        }
     }
     
-    next();
+    this.total = Math.max(0, total);
+    this.remainingAmount = this.total - (this.paidAmount || 0);
+    
+    if (this.status !== 'cancelled' && this.remainingAmount <= 0 && this.total > 0) {
+        this.status = 'paid';
+        this.paidAt = this.paidAt || new Date();
+    } else if (this.remainingAmount > 0 && this.remainingAmount < this.total) {
+        this.status = 'partially_paid';
+    }
 });
 
-// Virtual for age in days
-invoiceSchema.virtual('ageInDays').get(function() {
-    return Math.floor((new Date() - this.issueDate) / (1000 * 60 * 60 * 24));
-});
-
-// Virtual for overdue days
-invoiceSchema.virtual('overdueDays').get(function() {
-    if (this.paymentStatus === 'paid' || this.paymentStatus === 'overpaid') return 0;
-    const today = new Date();
-    if (today > this.dueDate) {
-        return Math.floor((today - this.dueDate) / (1000 * 60 * 60 * 24));
+// Virtual for days overdue
+invoiceSchema.virtual('daysOverdue').get(function() {
+    if (this.status !== 'paid' && this.status !== 'cancelled' && this.dueDate < new Date()) {
+        const diffTime = Math.abs(new Date() - this.dueDate);
+        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     }
     return 0;
 });
 
-// Virtual for is overdue
 invoiceSchema.virtual('isOverdue').get(function() {
-    return this.paymentStatus !== 'paid' && 
-           this.paymentStatus !== 'overpaid' && 
-           new Date() > this.dueDate;
+    return this.daysOverdue > 0;
 });
 
-// Method to add payment
-invoiceSchema.methods.addPayment = async function(paymentData, userId) {
-    const Payment = mongoose.model('Payment');
+// Method to record payment
+invoiceSchema.methods.recordPayment = async function(amount, session) {
+    this.paidAmount = (this.paidAmount || 0) + amount;
+    this.remainingAmount = this.total - this.paidAmount;
     
-    const payment = await Payment.create({
-        ...paymentData,
-        organization: this.organization,
-        invoice: this._id,
-        createdBy: userId
-    });
-    
-    this.payments.push(payment);
-    this.amountPaid += payment.amount;
-    this.amountDue = this.totalAmount - this.amountPaid;
-    
-    if (this.amountDue <= 0) {
-        this.paymentStatus = 'paid';
-        this.invoiceStatus = 'paid';
-    } else if (this.amountPaid > 0) {
-        this.paymentStatus = 'partial';
+    if (this.remainingAmount <= 0) {
+        this.status = 'paid';
+        this.paidAt = new Date();
+    } else if (this.paidAmount > 0) {
+        this.status = 'partially_paid';
     }
     
-    await this.save();
-    
-    return payment;
+    return this.save({ session });
 };
 
-// Method to approve invoice
-invoiceSchema.methods.approve = async function(userId, notes) {
-    this.invoiceStatus = 'approved';
-    this.approvedBy = userId;
-    this.approvedAt = new Date();
-    this.approvalNotes = notes;
-    this.updatedBy = userId;
+// Static method to generate invoice number
+invoiceSchema.statics.generateInvoiceNumber = async function(organizationId, type) {
+    const prefix = type === 'purchase' ? 'PO' : 'SI';
+    const currentYear = new Date().getFullYear();
+    const prefixWithYear = `${prefix}-${currentYear}`;
     
-    await this.save();
-    return this;
-};
-
-// Method to reject invoice
-invoiceSchema.methods.reject = async function(userId, reason) {
-    this.invoiceStatus = 'rejected';
-    this.rejectedBy = userId;
-    this.rejectedAt = new Date();
-    this.rejectionReason = reason;
-    this.updatedBy = userId;
-    
-    await this.save();
-    return this;
-};
-
-// Method to void invoice
-invoiceSchema.methods.void = async function(userId, reason) {
-    this.invoiceStatus = 'void';
-    this.notes = `VOIDED: ${reason || 'No reason provided'}\n${this.notes || ''}`;
-    this.updatedBy = userId;
-    
-    await this.save();
-    return this;
-};
-
-// Method to send invoice
-invoiceSchema.methods.send = async function(userId, emailData) {
-    this.invoiceStatus = 'sent';
-    this.updatedBy = userId;
-    
-    await this.save();
-    
-    // TODO: Trigger email sending
-    return this;
-};
-
-// Static method to get overdue invoices
-invoiceSchema.statics.getOverdueInvoices = async function(organizationId, asOfDate = new Date()) {
-    return this.find({
+    const lastInvoice = await this.findOne({
         organization: organizationId,
-        paymentStatus: { $nin: ['paid', 'overpaid'] },
-        dueDate: { $lt: asOfDate },
-        invoiceStatus: { $nin: ['cancelled', 'void'] },
-        isDeleted: { $ne: true }
-    }).populate('customer vendor');
-};
-
-// Static method to get invoices by period
-invoiceSchema.statics.getInvoicesByPeriod = async function(organizationId, year, month) {
-    const query = {
-        organization: organizationId,
-        'period.year': year,
-        isDeleted: { $ne: true }
-    };
+        invoiceNumber: { $regex: `^${prefixWithYear}` }
+    }).sort({ invoiceNumber: -1 });
     
-    if (month) {
-        query['period.month'] = month;
+    let nextNumber = 1;
+    if (lastInvoice) {
+        const parts = lastInvoice.invoiceNumber.split('-');
+        const lastNumber = parseInt(parts[parts.length - 1]);
+        nextNumber = lastNumber + 1;
     }
     
-    return this.find(query).sort('-issueDate');
+    return `${prefixWithYear}-${nextNumber.toString().padStart(4, '0')}`;
 };
 
 // Static method to get aging summary
-invoiceSchema.statics.getAgingSummary = async function(organizationId, asOfDate = new Date()) {
+invoiceSchema.statics.getAgingSummary = async function(organizationId) {
+    const aging = {
+        current: 0,
+        days1_30: 0,
+        days31_60: 0,
+        days61_90: 0,
+        days91_plus: 0,
+        total: 0
+    };
+    
     const invoices = await this.find({
         organization: organizationId,
-        paymentStatus: { $nin: ['paid', 'overpaid'] },
-        invoiceStatus: { $nin: ['cancelled', 'void'] },
-        isDeleted: { $ne: true }
+        type: 'purchase',
+        status: { $in: ['approved', 'partially_paid'] }
     });
-
-    const aging = {
-        current: { count: 0, amount: 0 },
-        days1to30: { count: 0, amount: 0 },
-        days31to60: { count: 0, amount: 0 },
-        days61to90: { count: 0, amount: 0 },
-        over90: { count: 0, amount: 0 },
-        total: { count: invoices.length, amount: 0 }
-    };
-
+    
     for (const invoice of invoices) {
-        const daysOverdue = Math.max(0, Math.floor((asOfDate - invoice.dueDate) / (1000 * 60 * 60 * 24)));
-        const amount = invoice.amountDue;
+        const daysOverdue = invoice.daysOverdue;
+        const amount = invoice.remainingAmount;
         
-        aging.total.amount += amount;
+        aging.total += amount;
         
-        if (daysOverdue <= 0) {
-            aging.current.count++;
-            aging.current.amount += amount;
+        if (daysOverdue === 0) {
+            aging.current += amount;
         } else if (daysOverdue <= 30) {
-            aging.days1to30.count++;
-            aging.days1to30.amount += amount;
+            aging.days1_30 += amount;
         } else if (daysOverdue <= 60) {
-            aging.days31to60.count++;
-            aging.days31to60.amount += amount;
+            aging.days31_60 += amount;
         } else if (daysOverdue <= 90) {
-            aging.days61to90.count++;
-            aging.days61to90.amount += amount;
+            aging.days61_90 += amount;
         } else {
-            aging.over90.count++;
-            aging.over90.amount += amount;
+            aging.days91_plus += amount;
         }
     }
-
+    
     return aging;
 };
 

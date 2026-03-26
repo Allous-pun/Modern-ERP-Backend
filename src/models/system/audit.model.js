@@ -90,6 +90,10 @@ const auditSchema = new mongoose.Schema({
             'report', 'report_template', 'scheduled_report',
             'account', 'journal_entry', 'budget', 'bank_account',
             'reconciliation', 'cash_flow_forecast',
+            'invoice', 'payment',
+            'tax_rate', 'tax_return',
+            'cost_center', 'cost_allocation', 'asset',
+            'depreciation',
             'other'
         ],
         required: true

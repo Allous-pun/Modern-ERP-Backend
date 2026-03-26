@@ -1,21 +1,31 @@
 ## FOR FINANCE 
 
 # First, run migration 004 (adds base permissions and module features)
-node src/seeders/migrations/004_enhanceFinanceModule.js
+node src/seeders/migrations/finance/004_enhanceFinanceModule.js
 
 # Then, run migration 005 (adds cross-module role updates)
-node src/seeders/migrations/005_financeModuleEnhancement.js
+node src/seeders/migrations//005_financeModuleEnhancement.js
 
-node src/seeders/migrations/006_add_granular_account_permissions.js
+node src/seeders/migrations/finance/006_add_granular_account_permissions.js
 
-node src/seeders/migrations/007_update_super_admin_permissions.js
+node src/seeders/migrations/finance/007_update_super_admin_permissions.js
 
-node src/seeders/migrations/008_add_journal_post_permission.js
+node src/seeders/migrations/finance/008_add_journal_post_permission.js
 
-node src/seeders/migrations/010_add_post_permission.js
+node src/seeders/migrations/finance/010_add_post_permission.js
 
-node src/seeders/migrations/011_add_budget_permissions.js
+node src/seeders/migrations/finance/011_add_budget_permissions.js
 
-node src/seeders/migrations/012_add_reports_permission.js
+node src/seeders/migrations/finance/012_add_reports_permission.js
 
-node src/seeders/migrations/013_add_treasury_permissions.js
+node src/seeders/migrations/finance/013_add_treasury_permissions.js
+
+node src/seeders/migrations/finance/014_add_ap_permissions.js
+
+node src/seeders/migrations/finance/015_add_ar_permissions.js
+
+node src/seeders/migrations/finance/016_add_tax_permissions.js
+
+node src/seeders/migrations/finance/017_add_cost_permissions.js
+
+node src/seeders/migrations/finance/018_add_asset_permissions.js

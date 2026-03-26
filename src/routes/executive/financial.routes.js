@@ -1,7 +1,7 @@
 // src/routes/executive/financial.routes.js
 const express = require('express');
 const router = express.Router();
-const attachSettings = require('../../middleware/settings.middleware'); // ADD THIS
+const attachSettings = require('../../middleware/settings.middleware');
 const {
     getFinancialDashboard,
     getFinancialHealth,
@@ -17,13 +17,15 @@ const {
     getTreasuryManagement,
     getTaxManagement,
     getFinancialForecast,
-    acknowledgeFinancialAlert
+    acknowledgeFinancialAlert,
+    getFinancialTrends,     // NEW: Add this
+    getFinancialVariance    // NEW: Add this
 } = require('../../controllers/executive/financialOversight.controller');
 const { requirePermission } = require('../../middleware/permission.middleware');
 const { body } = require('express-validator');
 
 // Apply settings middleware to all financial routes
-router.use(attachSettings); // ADD THIS LINE
+router.use(attachSettings);
 
 // Validation middleware
 const validateBudget = [
@@ -135,6 +137,20 @@ router.get('/tax',
 router.get('/forecast',
     requirePermission('executive.financial_oversight'),
     getFinancialForecast
+);
+
+// ==================== TREND & VARIANCE ROUTES (NEW) ====================
+
+// Get financial trend analysis
+router.get('/trends',
+    requirePermission('executive.financial_oversight'),
+    getFinancialTrends
+);
+
+// Get financial variance analysis
+router.get('/variance',
+    requirePermission('executive.financial_oversight'),
+    getFinancialVariance
 );
 
 // ==================== ALERT ROUTES ====================

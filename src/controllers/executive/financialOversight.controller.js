@@ -11,6 +11,17 @@ const { Account } = require('../../models/finance/account.model');
 const FinanceBudget = require('../../models/finance/budget.model');
 const { BankAccount } = require('../../models/finance/treasury.model');
 
+// NEW: Import Analysis and Forecast services
+const AnalysisService = require('../../services/finance/analysis.service');
+const ForecastService = require('../../services/finance/forecast.service');
+const AssetService = require('../../services/finance/asset.service');
+
+// Create instances
+const analysisService = new AnalysisService();
+const forecastService = new ForecastService();
+
+// ==================== EXISTING FUNCTIONS (KEEP AS IS) ====================
+
 /**
  * @desc    Get financial dashboard
  * @route   GET /api/executive/financial/dashboard
@@ -24,14 +35,12 @@ const getFinancialDashboard = async (req, res) => {
         const dateRange = calculateFinancialPeriod(period, year, quarter);
         const organizationId = req.organization.id;
         
-        // Try to find existing dashboard
         let dashboard = await FinancialDashboard.findOne({
             organization: organizationId,
             'period.start': dateRange.start,
             'period.end': dateRange.end
         }).populate('createdBy', 'personalInfo.firstName personalInfo.lastName email');
         
-        // Generate new dashboard if not found
         if (!dashboard) {
             const memberId = req.user?.isSupreme ? req.user?.userId : req.user?.memberId;
             dashboard = await generateFinancialDashboard(
@@ -429,25 +438,48 @@ const approveBudget = async (req, res) => {
     }
 };
 
+// ==================== UPDATED: Get financial ratios using Analysis module ====================
 /**
- * @desc    Get financial ratios
+ * @desc    Get financial ratios (UPDATED to use Analysis module)
  * @route   GET /api/executive/financial/ratios
  * @access  Private (CFO, CEO)
  */
 const getFinancialRatios = async (req, res) => {
     try {
-        const { period = 'monthly' } = req.query;
-        const dateRange = calculateFinancialPeriod(period);
+        const { period = 'monthly', startDate, endDate } = req.query;
+        const organizationId = req.organization.id;
         
-        const dashboard = await FinancialDashboard.findOne({
-            organization: req.organization.id,
-            'period.start': dateRange.start,
-            'period.end': dateRange.end
-        });
+        let ratiosData = null;
+        
+        let dateRange;
+        if (startDate && endDate) {
+            dateRange = { start: new Date(startDate), end: new Date(endDate) };
+        } else {
+            dateRange = calculateFinancialPeriod(period);
+        }
+        
+        try {
+            const analysisResult = await analysisService.calculateRatios({
+                startDate: dateRange.start,
+                endDate: dateRange.end
+            }, organizationId);
+            
+            ratiosData = analysisResult;
+        } catch (analysisError) {
+            console.log('Analysis module not available, falling back to dashboard:', analysisError.message);
+            
+            const dashboard = await FinancialDashboard.findOne({
+                organization: organizationId,
+                'period.start': dateRange.start,
+                'period.end': dateRange.end
+            });
+            
+            ratiosData = dashboard?.ratios || {};
+        }
         
         res.status(200).json({
             success: true,
-            data: dashboard?.ratios || {}
+            data: ratiosData
         });
         
     } catch (error) {
@@ -518,19 +550,61 @@ const getTaxManagement = async (req, res) => {
     }
 };
 
+// ==================== UPDATED: Get financial forecast using Forecast module ====================
 /**
- * @desc    Get financial forecast
+ * @desc    Get financial forecast (UPDATED to use Forecast module)
  * @route   GET /api/executive/financial/forecast
  * @access  Private (CFO, CEO)
  */
 const getFinancialForecast = async (req, res) => {
     try {
-        const { metric = 'revenue', horizon = '12months' } = req.query;
-        const forecast = await generateFinancialForecast(req.organization.id, metric, horizon);
+        const { metric = 'revenue', horizon = '12months', months = 12 } = req.query;
+        const organizationId = req.organization.id;
+        
+        let forecastData = null;
+        
+        try {
+            const monthsInt = horizon === '12months' ? 12 : horizon === '6months' ? 6 : 3;
+            
+            const forecast = await forecastService.generateForecast(
+                organizationId,
+                monthsInt,
+                {
+                    revenueGrowth: 10,
+                    expenseGrowth: 5,
+                    inflation: 3
+                },
+                { id: req.user?.memberId || req.user?.userId }
+            );
+            
+            if (forecast && forecast.results) {
+                let values = [];
+                if (metric === 'revenue') {
+                    values = forecast.results.monthly.map(m => ({ period: `${m.month} ${m.year}`, value: m.revenue }));
+                } else if (metric === 'profit') {
+                    values = forecast.results.monthly.map(m => ({ period: `${m.month} ${m.year}`, value: m.netIncome }));
+                } else if (metric === 'cashflow') {
+                    values = forecast.results.monthly.map(m => ({ period: `${m.month} ${m.year}`, value: m.cashFlow }));
+                }
+                
+                forecastData = {
+                    metric,
+                    horizon: `${monthsInt}months`,
+                    baseValue: values[0]?.value || 0,
+                    forecast: values,
+                    summary: forecast.results.summary,
+                    quarterly: forecast.results.quarterly,
+                    yearly: forecast.results.yearly
+                };
+            }
+        } catch (forecastError) {
+            console.log('Forecast module not available, using fallback:', forecastError.message);
+            forecastData = await generateFinancialForecast(organizationId, metric, horizon);
+        }
         
         res.status(200).json({
             success: true,
-            data: forecast
+            data: forecastData
         });
         
     } catch (error) {
@@ -587,6 +661,89 @@ const acknowledgeFinancialAlert = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to acknowledge alert'
+        });
+    }
+};
+
+// ==================== NEW: Get trend analysis endpoint ====================
+/**
+ * @desc    Get financial trend analysis from Analysis module
+ * @route   GET /api/executive/financial/trends
+ * @access  Private (CFO, CEO)
+ */
+const getFinancialTrends = async (req, res) => {
+    try {
+        const { metric = 'revenue', periods = 12 } = req.query;
+        const organizationId = req.organization.id;
+        
+        let trendsData = null;
+        
+        try {
+            trendsData = await analysisService.analyzeTrends({
+                metric,
+                periods: parseInt(periods),
+                forecast: true
+            }, organizationId);
+        } catch (error) {
+            console.log('Analysis module not available:', error.message);
+            trendsData = { error: 'Trend analysis not available' };
+        }
+        
+        res.status(200).json({
+            success: true,
+            data: trendsData
+        });
+        
+    } catch (error) {
+        console.error('Get trends error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch trend analysis'
+        });
+    }
+};
+
+// ==================== NEW: Get variance analysis from Analysis module ====================
+/**
+ * @desc    Get variance analysis from Analysis module
+ * @route   GET /api/executive/financial/variance
+ * @access  Private (CFO, CEO)
+ */
+const getFinancialVariance = async (req, res) => {
+    try {
+        const { startDate, endDate, compareTo = 'budget' } = req.query;
+        const organizationId = req.organization.id;
+        
+        if (!startDate || !endDate) {
+            return res.status(400).json({
+                success: false,
+                message: 'startDate and endDate are required'
+            });
+        }
+        
+        let varianceData = null;
+        
+        try {
+            varianceData = await analysisService.analyzeVariances({
+                startDate,
+                endDate,
+                compareTo
+            }, organizationId);
+        } catch (error) {
+            console.log('Analysis module not available:', error.message);
+            varianceData = { error: 'Variance analysis not available' };
+        }
+        
+        res.status(200).json({
+            success: true,
+            data: varianceData
+        });
+        
+    } catch (error) {
+        console.error('Get variance error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch variance analysis'
         });
     }
 };
@@ -682,7 +839,7 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         let balance = 0;
         for (const entry of journalEntries) {
             for (const line of entry.entries) {
-                if (line.account.toString() === account._id.toString()) {
+                if (line.account && line.account.toString() === account._id.toString()) {
                     balance += (line.credit || 0) - (line.debit || 0);
                 }
             }
@@ -699,7 +856,6 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         }
     }
     
-    // Calculate percentages
     revenueByStream.forEach(item => {
         item.percentage = totalRevenue > 0 ? (item.value / totalRevenue) * 100 : 0;
     });
@@ -712,7 +868,7 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         let balance = 0;
         for (const entry of journalEntries) {
             for (const line of entry.entries) {
-                if (line.account.toString() === account._id.toString()) {
+                if (line.account && line.account.toString() === account._id.toString()) {
                     balance += (line.debit || 0) - (line.credit || 0);
                 }
             }
@@ -730,7 +886,6 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         }
     }
     
-    // Calculate percentages
     expensesByCategory.forEach(item => {
         item.percentage = totalExpenses > 0 ? (item.value / totalExpenses) * 100 : 0;
     });
@@ -741,7 +896,7 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         let balance = 0;
         for (const entry of journalEntries) {
             for (const line of entry.entries) {
-                if (line.account.toString() === account._id.toString()) {
+                if (line.account && line.account.toString() === account._id.toString()) {
                     balance += (line.debit || 0) - (line.credit || 0);
                 }
             }
@@ -749,21 +904,42 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         totalAssets += balance;
     }
     
+    // Get asset data from Fixed Assets module
+    let totalFixedAssets = 0;
+    let totalDepreciation = 0;
+    
+    try {
+        const assetSummary = await AssetService.getAssetSummary(organizationId);
+        if (assetSummary) {
+            totalFixedAssets = assetSummary.totalValue || 0;
+            totalDepreciation = assetSummary.totalDepreciation || 0;
+            totalAssets += totalFixedAssets;
+        }
+    } catch (assetError) {
+        console.log('Asset module not available:', assetError.message);
+    }
+    
+    // Get ratio analysis from Analysis module
+    let analysisRatios = null;
+    try {
+        analysisRatios = await analysisService.calculateRatios({
+            startDate: dateRange.start,
+            endDate: dateRange.end
+        }, organizationId);
+    } catch (analysisError) {
+        console.log('Analysis module not available:', analysisError.message);
+    }
+    
     const netProfit = totalRevenue - totalExpenses;
     const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
     
-    // Get budget data from finance module
     const budgetData = await getBudgetDataForExecutive(organizationId, year || new Date().getFullYear());
     
-    // ==================== GET REAL TREASURY DATA ====================
-    // Get bank accounts from treasury module
-    const BankAccount = require('../../models/finance/treasury.model').BankAccount;
     const bankAccounts = await BankAccount.find({
         organization: organizationId,
         isActive: true
     }).lean();
     
-    // Calculate total cash from bank accounts
     let totalCash = 0;
     const cashByCurrency = [];
     const cashByAccount = [];
@@ -771,7 +947,6 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
     for (const account of bankAccounts) {
         totalCash += account.currentBalance;
         
-        // Group by currency
         const existingCurrency = cashByCurrency.find(c => c.currency === account.currency);
         if (existingCurrency) {
             existingCurrency.amount += account.currentBalance;
@@ -782,7 +957,6 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
             });
         }
         
-        // Add to byAccount list
         cashByAccount.push({
             bank: account.bankName,
             account: account.accountName,
@@ -791,26 +965,6 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         });
     }
     
-    // Get investments (if any)
-    const investments = [];
-    
-    // Get debt (if any)
-    const debt = [];
-    
-    // Update expense breakdown with budget info
-    if (budgetData && budgetData.byDepartment) {
-        for (const expense of expensesByCategory) {
-            const budgetItem = budgetData.byDepartment.find(d => 
-                d.department.toLowerCase() === expense.category.toLowerCase()
-            );
-            if (budgetItem) {
-                expense.budget = budgetItem.budget;
-                expense.variance = budgetItem.variance;
-            }
-        }
-    }
-    
-    // Create dashboard with real treasury data
     const dashboard = new FinancialDashboard({
         organization: organizationId,
         name: `Financial Dashboard - ${period} ${year || ''}`,
@@ -846,10 +1000,15 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
                 runway: netProfit > 0 ? 999 : 0
             },
             balanceSheet: {
-                assets: { total: totalAssets, current: totalAssets, fixed: 0, intangible: 0 },
+                assets: { 
+                    total: totalAssets, 
+                    current: totalAssets - totalFixedAssets, 
+                    fixed: totalFixedAssets,
+                    intangible: 0 
+                },
                 liabilities: { total: 0, current: 0, longTerm: 0 },
                 equity: { total: totalAssets, retained: netProfit, paid: totalAssets - netProfit },
-                workingCapital: totalAssets,
+                workingCapital: totalAssets - totalFixedAssets,
                 debtToEquity: 0
             }
         },
@@ -873,9 +1032,9 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
             ebitda: { value: netProfit, margin: netMargin, target: 30, variance: netMargin - 30 },
             breakEven: { revenue: totalExpenses, units: 0, months: 0, marginOfSafety: totalRevenue > 0 ? (totalRevenue - totalExpenses) / totalRevenue * 100 : 0 }
         },
-        ratios: {
+        ratios: analysisRatios || {
             liquidity: { 
-                current: totalAssets > 0 ? 1 : 0, 
+                current: totalAssets > 0 ? totalAssets / (totalExpenses / 12) : 0, 
                 quick: 1, 
                 cash: totalCash > 0 ? totalCash / (totalExpenses / 12) : 0 
             },
@@ -907,8 +1066,8 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
                 byCurrency: cashByCurrency,
                 byAccount: cashByAccount
             },
-            investments: investments,
-            debt: debt,
+            investments: [],
+            debt: [],
             forecast: { inflow: [], outflow: [], netPosition: [] }
         },
         tax: {
@@ -932,7 +1091,7 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         createdBy: memberId
     });
     
-    // Add alerts based on real data
+    // Add alerts
     if (netMargin < 15) {
         dashboard.alerts.push({
             type: 'profitability',
@@ -959,15 +1118,27 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
         });
     }
     
-    // Add cash alert if cash is low
     if (totalCash < totalExpenses) {
         dashboard.alerts.push({
             type: 'liquidity',
             severity: 'critical',
-            message: `Cash balance (${totalCash}) is less than monthly expenses (${totalExpenses})`,
+            message: `Cash balance is less than monthly expenses`,
             metric: 'cashCoverage',
             value: totalCash / totalExpenses,
             threshold: 1,
+            timestamp: new Date(),
+            resolved: false
+        });
+    }
+    
+    if (totalDepreciation > 0 && totalDepreciation > totalFixedAssets * 0.8) {
+        dashboard.alerts.push({
+            type: 'asset',
+            severity: 'warning',
+            message: `Assets are ${((totalDepreciation / totalFixedAssets) * 100).toFixed(1)}% depreciated`,
+            metric: 'depreciationRate',
+            value: (totalDepreciation / totalFixedAssets) * 100,
+            threshold: 80,
             timestamp: new Date(),
             resolved: false
         });
@@ -979,8 +1150,6 @@ async function generateFinancialDashboard(organizationId, dateRange, period, yea
 
 async function getBudgetDataForExecutive(organizationId, fiscalYear) {
     try {
-        console.log(`Looking for budget for fiscal year ${fiscalYear}`);
-        
         const financeBudget = await FinanceBudget.findOne({
             organization: organizationId,
             fiscalYear: fiscalYear,
@@ -988,12 +1157,8 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
         }).populate('lineItems.account');
         
         if (!financeBudget) {
-            console.log(`No active/approved budget found for fiscal year ${fiscalYear}`);
             return null;
         }
-        
-        console.log(`Found budget: ${financeBudget.budgetNumber}, status: ${financeBudget.status}`);
-        console.log(`Line items: ${financeBudget.lineItems.length}`);
         
         const budgetData = {
             current: { revenue: 0, expenses: 0, profit: 0, capex: 0 },
@@ -1024,15 +1189,10 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
                 account = await Account.findById(account);
             }
             
-            if (!account) {
-                console.log(`Skipping item with invalid account reference`);
-                continue;
-            }
+            if (!account) continue;
             
             const amount = item.amount || 0;
             const actualAmount = item.actualAmount || 0;
-            
-            console.log(`Processing: ${account.name} (${account.type}) - Budget: ${amount}, Actual: ${actualAmount}`);
             
             if (account.type === 'revenue') {
                 totalBudgetRevenue += amount;
@@ -1079,10 +1239,6 @@ async function getBudgetDataForExecutive(organizationId, fiscalYear) {
         }
         
         budgetData.byDepartment.sort((a, b) => b.budget - a.budget);
-        
-        console.log(`Budget data prepared: Revenue Budget: ${totalBudgetRevenue}, Actual Revenue: ${totalActualRevenue}`);
-        console.log(`Expense Budget: ${totalBudgetExpenses}, Actual Expenses: ${totalActualExpenses}`);
-        console.log(`Departments: ${budgetData.byDepartment.length}`);
         
         return budgetData;
         
@@ -1141,22 +1297,20 @@ async function createBudgetTemplate(organizationId, fiscalYear, memberId) {
 async function checkFinancialAlerts(organizationId, dashboard) {
     const alerts = [];
     
-    // Check if alert already exists before adding
     const existingAlert = (type, metric) => {
         return dashboard.alerts.some(a => a.type === type && a.metric === metric && !a.resolved);
     };
 
     const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     
-        dashboard.alerts = dashboard.alerts.filter(alert => {
+    dashboard.alerts = dashboard.alerts.filter(alert => {
         if (alert.resolved && new Date(alert.timestamp) < thirtyDaysAgo) {
             return false;
         }
         return true;
     });
     
-    // Current ratio alert
     if (dashboard.ratios?.liquidity?.current < 1.5 && !existingAlert('liquidity', 'currentRatio')) {
         alerts.push({
             type: 'liquidity',
@@ -1170,7 +1324,6 @@ async function checkFinancialAlerts(organizationId, dashboard) {
         });
     }
     
-    // Revenue growth alert
     if ((dashboard.revenue?.trends?.yearOverYear || 0) < 5 && !existingAlert('growth', 'yoyGrowth')) {
         alerts.push({
             type: 'growth',
@@ -1184,7 +1337,6 @@ async function checkFinancialAlerts(organizationId, dashboard) {
         });
     }
     
-    // Only add new alerts that don't exist
     if (alerts.length > 0) {
         dashboard.alerts = [...dashboard.alerts, ...alerts].slice(0, 50);
         await dashboard.save();
@@ -1225,6 +1377,8 @@ async function generateFinancialForecast(organizationId, metric, horizon) {
     return { metric, horizon, baseValue, forecast };
 }
 
+// ==================== MODULE EXPORTS ====================
+
 module.exports = {
     getFinancialDashboard,
     getFinancialHealth,
@@ -1240,5 +1394,7 @@ module.exports = {
     getTreasuryManagement,
     getTaxManagement,
     getFinancialForecast,
-    acknowledgeFinancialAlert
+    acknowledgeFinancialAlert,
+    getFinancialTrends,
+    getFinancialVariance
 };
