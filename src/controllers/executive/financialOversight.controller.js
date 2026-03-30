@@ -206,7 +206,7 @@ const getCashFlowAnalysis = async (req, res) => {
 };
 
 /**
- * @desc    Get budget management
+ * @desc    Get budget management (UPDATED to use Finance Budget module)
  * @route   GET /api/executive/financial/budget
  * @access  Private (CFO, CEO)
  */
@@ -216,33 +216,102 @@ const getBudgetManagement = async (req, res) => {
         const organizationId = req.organization.id;
         const targetYear = fiscalYear ? parseInt(fiscalYear) : new Date().getFullYear();
         
-        let budget = await Budget.findOne({
+        // Use Finance Budget model instead of executive's own Budget model
+        const FinanceBudget = require('../../models/finance/budget.model');
+        
+        // Get active/approved budgets for the fiscal year
+        let budgets = await FinanceBudget.find({
             organization: organizationId,
             fiscalYear: targetYear,
             status: { $in: ['active', 'approved'] }
-        }).sort({ version: -1 });
+        }).populate('lineItems.account', 'code name type category')
+          .sort({ version: -1, createdAt: -1 });
         
-        if (!budget) {
-            budget = await Budget.findOne({
+        // If no active/approved budgets, get any budgets
+        if (!budgets || budgets.length === 0) {
+            budgets = await FinanceBudget.find({
                 organization: organizationId,
                 fiscalYear: targetYear
-            }).sort({ version: -1 });
+            }).populate('lineItems.account', 'code name type category')
+              .sort({ version: -1, createdAt: -1 });
         }
         
-        if (!budget) {
-            const memberId = req.user?.isSupreme ? req.user?.userId : req.user?.memberId;
-            budget = await createBudgetTemplate(organizationId, targetYear, memberId);
+        // Calculate summary totals
+        let totalBudgetRevenue = 0;
+        let totalBudgetExpenses = 0;
+        let totalActualRevenue = 0;
+        let totalActualExpenses = 0;
+        
+        for (const budget of budgets) {
+            for (const item of budget.lineItems) {
+                const account = item.account;
+                if (account && account.type === 'revenue') {
+                    totalBudgetRevenue += item.amount || 0;
+                    totalActualRevenue += item.actualAmount || 0;
+                } else if (account && account.type === 'expense') {
+                    totalBudgetExpenses += item.amount || 0;
+                    totalActualExpenses += item.actualAmount || 0;
+                }
+            }
         }
         
-        const versions = await Budget.find({
-            organization: organizationId,
-            fiscalYear: targetYear
-        }).select('version status createdAt approvedAt').sort({ version: -1 });
+        const totalBudget = totalBudgetRevenue + totalBudgetExpenses;
+        const totalActual = totalActualRevenue + totalActualExpenses;
+        const totalVariance = totalBudget - totalActual;
+        const netProfit = (totalActualRevenue - totalActualExpenses);
+        const netMargin = totalActualRevenue > 0 ? (netProfit / totalActualRevenue) * 100 : 0;
+        
+        // Format budget data for executive display
+        const executiveBudgetData = {
+            summary: {
+                totalBudget: totalBudget,
+                totalActual: totalActual,
+                totalVariance: totalVariance,
+                totalBudgetRevenue: totalBudgetRevenue,
+                totalBudgetExpenses: totalBudgetExpenses,
+                totalActualRevenue: totalActualRevenue,
+                totalActualExpenses: totalActualExpenses,
+                netProfit: netProfit,
+                netMargin: netMargin,
+                budgetCount: budgets.length
+            },
+            budgets: budgets.map(budget => ({
+                _id: budget._id,
+                name: budget.name,
+                budgetNumber: budget.budgetNumber,
+                fiscalYear: budget.fiscalYear,
+                version: budget.version || 1,
+                status: budget.status,
+                totalBudget: budget.totalBudget,
+                totalActual: budget.totalActual,
+                totalVariance: budget.totalVariance,
+                lineItems: budget.lineItems.map(item => ({
+                    account: {
+                        _id: item.account._id,
+                        code: item.account.code,
+                        name: item.account.name,
+                        type: item.account.type
+                    },
+                    budget: item.amount,
+                    actual: item.actualAmount,
+                    variance: item.variance,
+                    variancePercentage: item.variancePercentage
+                })),
+                createdAt: budget.createdAt,
+                approvedAt: budget.approvedAt,
+                createdBy: budget.createdBy
+            })),
+            versions: await FinanceBudget.find({
+                organization: organizationId,
+                fiscalYear: targetYear
+            }).select('version status createdAt approvedAt')
+              .sort({ version: -1 })
+              .lean()
+        };
         
         res.status(200).json({
             success: true,
-            data: budget,
-            versions
+            data: executiveBudgetData
         });
         
     } catch (error) {
